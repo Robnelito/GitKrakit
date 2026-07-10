@@ -13,16 +13,21 @@ from PySide6.QtCore import Qt, QEvent
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QFileDialog,
+    QHBoxLayout,
     QMainWindow,
     QMenu,
     QMessageBox,
     QInputDialog,
     QSplitter,
+    QStackedWidget,
     QTabWidget,
     QToolBar,
     QToolButton,
+    QVBoxLayout,
+    QWidget,
 )
 
+from gitkrakit import theme
 from gitkrakit.core import CommitInfo, GitBackend, GitBackendError, GitFlow
 from gitkrakit.ui.graph_view import GraphPanel
 from gitkrakit.ui.panels import (
@@ -124,10 +129,18 @@ class MainWindow(QMainWindow):
         self.sidebar.gitflow_finish_requested.connect(self._gitflow_finish)
         splitter.addWidget(self.sidebar)
 
-        # --- centre : graphe de commits ---
+        # --- centre : graphe de commits, remplacé par le diff d'un fichier
+        #     quand on en sélectionne un (bascule via QStackedWidget) ---
         self.graph_panel = GraphPanel()
         self.graph_panel.commit_selected.connect(self.show_commit_details)
-        splitter.addWidget(self.graph_panel)
+
+        self.diff_panel = DiffPanel()
+        diff_page = self._build_diff_page(self.diff_panel)
+
+        self.center_stack = QStackedWidget()
+        self.center_stack.addWidget(self.graph_panel)  # index 0 : graphe
+        self.center_stack.addWidget(diff_page)         # index 1 : diff
+        splitter.addWidget(self.center_stack)
 
         # --- droite : staging + détails ---
         right_panel = QTabWidget()
@@ -142,15 +155,47 @@ class MainWindow(QMainWindow):
         self.details_panel = DetailsPanel()
         self.details_panel.file_diff_requested.connect(self._show_commit_diff)
         right_panel.addTab(self.details_panel, "Détails du commit")
-
-        self.diff_panel = DiffPanel()
-        right_panel.addTab(self.diff_panel, "Diff")
         self._right_panel = right_panel
 
         splitter.addWidget(right_panel)
         splitter.setSizes([230, 720, 330])
 
         self.setCentralWidget(splitter)
+
+    def _build_diff_page(self, diff_panel: DiffPanel) -> QWidget:
+        """Page du diff dans la zone centrale : une barre avec un bouton de
+        fermeture (retour au graphe) au-dessus du panneau de diff."""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        bar = QWidget()
+        bar.setStyleSheet(
+            f"background-color: {theme.PANEL_BG}; border-bottom: 1px solid {theme.BORDER};"
+        )
+        bar_layout = QHBoxLayout(bar)
+        bar_layout.setContentsMargins(4, 4, 4, 4)
+
+        close_btn = QToolButton()
+        close_btn.setText("✕")
+        close_btn.setToolTip("Fermer le diff et revenir au graphe")
+        close_btn.setCursor(Qt.PointingHandCursor)
+        close_btn.setStyleSheet(
+            "QToolButton { border: none; background: transparent;"
+            f" color: {theme.TEXT_MUTED}; font-weight: bold; padding: 2px 9px; border-radius: 4px; }}"
+            f"QToolButton:hover {{ background-color: {theme.SURFACE}; color: {theme.HIGHLIGHT}; }}"
+        )
+        close_btn.clicked.connect(self._close_diff)
+        bar_layout.addWidget(close_btn)
+        bar_layout.addStretch(1)
+
+        layout.addWidget(bar)
+        layout.addWidget(diff_panel, stretch=1)
+        return page
+
+    def _close_diff(self) -> None:
+        self.center_stack.setCurrentWidget(self.graph_panel)
 
     def _build_terminal_dock(self) -> None:
         self.terminal = TerminalDock(self)
@@ -176,6 +221,7 @@ class MainWindow(QMainWindow):
         self.workspace_manager.touch_recent(active_path)
         self.sidebar.set_active_repo(active_path)
         self.setWindowTitle(f"GitKrakit — {path}")
+        self._close_diff()  # un diff affiché appartient à l'ancien dépôt
         self.refresh_all()
 
     # ------------------------------------------------------------------
@@ -374,16 +420,16 @@ class MainWindow(QMainWindow):
     def _show_working_diff(self, path: str, staged: bool) -> None:
         diff = self.backend.diff_for_file(path, staged=staged)
         origin = "indexé" if staged else "non indexé"
-        self.diff_panel.show_diff(f"{path}  ({origin})", diff)
-        self._right_panel.setCurrentWidget(self.diff_panel)
+        self.diff_panel.show_diff(f"{path}  ({origin})", diff, file_path=path)
+        self.center_stack.setCurrentIndex(1)
 
     def _show_commit_diff(self, sha: str, path: str) -> None:
         try:
             diff = self.backend.diff_for_commit_file(sha, path)
         except GitBackendError as exc:
             diff = str(exc)
-        self.diff_panel.show_diff(f"{path}  (commit {sha[:7]})", diff)
-        self._right_panel.setCurrentWidget(self.diff_panel)
+        self.diff_panel.show_diff(f"{path}  (commit {sha[:7]})", diff, file_path=path)
+        self.center_stack.setCurrentIndex(1)
 
     def _run_terminal_command(self, args: list[str]) -> None:
         if not self.backend.is_open:
