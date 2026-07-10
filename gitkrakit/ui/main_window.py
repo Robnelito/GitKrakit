@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import time
 
-from PySide6.QtCore import Qt, QEvent
+from PySide6.QtCore import Qt, QEvent, QSize
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 
 from gitkrakit import theme
 from gitkrakit.core import CommitInfo, GitBackend, GitBackendError, GitFlow
+from gitkrakit.ui import icons
 from gitkrakit.ui.graph_view import GraphPanel
 from gitkrakit.ui.panels import (
     DetailsPanel,
@@ -63,29 +64,32 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     def _build_toolbar(self) -> None:
         toolbar = QToolBar("Actions")
+        toolbar.setIconSize(QSize(18, 18))
+        toolbar.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        toolbar.setMovable(False)
         self.addToolBar(toolbar)
 
-        open_action = QAction("Ouvrir un dépôt", self)
+        open_action = QAction(icons.toolbar_icon("open"), "Ouvrir un dépôt", self)
         open_action.triggered.connect(self.open_repo_dialog)
         toolbar.addAction(open_action)
 
         toolbar.addSeparator()
 
-        fetch_action = QAction("Fetch", self)
+        fetch_action = QAction(icons.toolbar_icon("fetch"), "Fetch", self)
         fetch_action.triggered.connect(lambda: self._run_backend_op(self.backend.fetch))
         toolbar.addAction(fetch_action)
 
-        pull_action = QAction("Pull", self)
+        pull_action = QAction(icons.toolbar_icon("pull"), "Pull", self)
         pull_action.triggered.connect(lambda: self._run_backend_op(self.backend.pull))
         toolbar.addAction(pull_action)
 
-        push_action = QAction("Push", self)
+        push_action = QAction(icons.toolbar_icon("push"), "Push", self)
         push_action.triggered.connect(lambda: self._run_backend_op(self.backend.push))
         toolbar.addAction(push_action)
 
         toolbar.addSeparator()
 
-        branch_action = QAction("Nouvelle branche", self)
+        branch_action = QAction(icons.toolbar_icon("branch"), "Nouvelle branche", self)
         branch_action.triggered.connect(self.create_branch_dialog)
         toolbar.addAction(branch_action)
 
@@ -96,22 +100,27 @@ class MainWindow(QMainWindow):
         gitflow_menu.addAction("Démarrer une release…", lambda: self._gitflow_start("release"))
         gitflow_menu.addAction("Démarrer un hotfix…", lambda: self._gitflow_start("hotfix"))
         gitflow_button = QToolButton()
+        gitflow_button.setIcon(icons.toolbar_icon("gitflow"))
         gitflow_button.setText("Git Flow")
+        gitflow_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         gitflow_button.setMenu(gitflow_menu)
         gitflow_button.setPopupMode(QToolButton.InstantPopup)
+        gitflow_button.setAutoRaise(True)
         toolbar.addWidget(gitflow_button)
 
-        stash_action = QAction("Stash", self)
+        toolbar.addSeparator()
+
+        stash_action = QAction(icons.toolbar_icon("stash"), "Stash", self)
         stash_action.triggered.connect(lambda: self._run_backend_op(self.backend.stash))
         toolbar.addAction(stash_action)
 
-        pop_action = QAction("Pop", self)
+        pop_action = QAction(icons.toolbar_icon("pop"), "Pop", self)
         pop_action.triggered.connect(lambda: self._run_backend_op(self.backend.stash_pop))
         toolbar.addAction(pop_action)
 
         toolbar.addSeparator()
 
-        refresh_action = QAction("Rafraîchir", self)
+        refresh_action = QAction(icons.toolbar_icon("refresh"), "Rafraîchir", self)
         # lambda : triggered émet un bool (checked) qui écraserait show_errors
         refresh_action.triggered.connect(lambda: self.refresh_all())
         toolbar.addAction(refresh_action)
@@ -178,13 +187,15 @@ class MainWindow(QMainWindow):
         bar_layout.setContentsMargins(4, 4, 4, 4)
 
         close_btn = QToolButton()
-        close_btn.setText("✕")
+        close_btn.setIcon(icons.toolbar_icon("back"))
+        close_btn.setText("Retour au graphe")
+        close_btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         close_btn.setToolTip("Fermer le diff et revenir au graphe")
         close_btn.setCursor(Qt.PointingHandCursor)
         close_btn.setStyleSheet(
-            "QToolButton { border: none; background: transparent;"
-            f" color: {theme.TEXT_MUTED}; font-weight: bold; padding: 2px 9px; border-radius: 4px; }}"
-            f"QToolButton:hover {{ background-color: {theme.SURFACE}; color: {theme.HIGHLIGHT}; }}"
+            "QToolButton { border: 1px solid " + theme.BORDER + "; background: " + theme.SURFACE + ";"
+            f" color: {theme.TEXT}; padding: 3px 10px; border-radius: 5px; }}"
+            f"QToolButton:hover {{ background-color: {theme.BORDER}; border-color: {theme.ACCENT}; }}"
         )
         close_btn.clicked.connect(self._close_diff)
         bar_layout.addWidget(close_btn)
