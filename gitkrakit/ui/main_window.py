@@ -172,7 +172,9 @@ class MainWindow(QMainWindow):
         except GitBackendError as exc:
             QMessageBox.critical(self, "Erreur", str(exc))
             return
-        self.workspace_manager.touch_recent(self.backend.working_dir or path)
+        active_path = self.backend.working_dir or path
+        self.workspace_manager.touch_recent(active_path)
+        self.sidebar.set_active_repo(active_path)
         self.setWindowTitle(f"GitKrakit — {path}")
         self.refresh_all()
 
