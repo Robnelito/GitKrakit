@@ -97,6 +97,26 @@ class GitBackend:
         self._require_repo()
         return [t.name for t in self.repo.tags]
 
+    def branch_ahead_behind(self) -> dict[str, tuple[int, int]]:
+        """Pour chaque branche locale ayant une branche amont (tracking),
+        retourne {nom: (ahead, behind)} par rapport à cette branche amont.
+        Ne déclenche aucun accès réseau : compare l'état local au dernier
+        `fetch` connu (refs/remotes/...), d'où l'intérêt du fetch auto."""
+        self._require_repo()
+        result: dict[str, tuple[int, int]] = {}
+        for head in self.repo.heads:
+            tracking = head.tracking_branch()
+            if tracking is None:
+                continue
+            try:
+                ahead = int(self.repo.git.rev_list("--count", f"{tracking.name}..{head.name}"))
+                behind = int(self.repo.git.rev_list("--count", f"{head.name}..{tracking.name}"))
+            except git.GitCommandError:
+                continue
+            if ahead or behind:
+                result[head.name] = (ahead, behind)
+        return result
+
     def create_branch(self, name: str, start_point: Optional[str] = None) -> None:
         self._require_repo()
         try:
