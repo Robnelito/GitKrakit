@@ -13,6 +13,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFont
 from PySide6.QtWidgets import (
     QFileDialog,
+    QHeaderView,
     QInputDialog,
     QLineEdit,
     QMenu,
@@ -64,7 +65,10 @@ class SidebarPanel(QWidget):
         self.tree.setColumnCount(2)
         self.tree.setHeaderHidden(True)
         self.tree.setRootIsDecorated(True)
+        # colonne 0 (nom) extensible, colonne 1 (compteur) étroite et fixe
         self.tree.header().setStretchLastSection(False)
+        self.tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.tree.header().setSectionResizeMode(1, QHeaderView.Fixed)
         self.tree.header().resizeSection(1, 36)
         self.tree.itemDoubleClicked.connect(self._on_double_click)
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
