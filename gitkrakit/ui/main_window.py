@@ -14,6 +14,7 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
+    QLabel,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -27,7 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gitkrakit import theme
+from gitkrakit import __version__, theme
 from gitkrakit.core import CommitInfo, GitBackend, GitBackendError, GitFlow
 from gitkrakit.ui import icons
 from gitkrakit.ui.graph_view import GraphPanel
@@ -84,6 +85,10 @@ class MainWindow(QMainWindow):
         self._auto_fetch_timer.setInterval(AUTO_FETCH_INTERVAL_MS)
         self._auto_fetch_timer.timeout.connect(self._auto_fetch)
         self._auto_fetch_timer.start()
+
+        version_label = QLabel(f"v{__version__}")
+        version_label.setStyleSheet(f"color: {theme.TEXT_MUTED}; padding: 0 8px;")
+        self.statusBar().addPermanentWidget(version_label)
 
         self.statusBar().showMessage("Ouvre un dépôt pour commencer (Ouvrir un dépôt)")
 
