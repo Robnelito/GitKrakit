@@ -247,27 +247,18 @@ class SidebarPanel(QWidget):
 
         self._build_gitflow_section(tree)
 
-        local_section = self._add_section(tree, "Local", len(self._local))
-        for name in self._local:
-            item = QTreeWidgetItem([name, ""])
-            item.setData(0, _KIND_ROLE, K_LOCAL_BRANCH)
-            item.setData(0, _DATA_ROLE, name)
-            self._mark_if_current(item, name)
-            local_section.addChild(item)
+        # "origin/HEAD" est un alias symbolique (pas une vraie branche) :
+        # pur bruit dans la liste, on l'exclut.
+        remote_names = [n for n in self._remote if n.rsplit("/", 1)[-1] != "HEAD"]
 
-        remote_section = self._add_section(tree, "Remote", len(self._remote))
-        for name in self._remote:
-            item = QTreeWidgetItem([name, ""])
-            item.setData(0, _KIND_ROLE, K_REMOTE_BRANCH)
-            item.setData(0, _DATA_ROLE, name)
-            remote_section.addChild(item)
+        local_section = self._add_section(tree, "Local", len(self._local))
+        self._add_branch_tree(local_section, K_LOCAL_BRANCH, self._local, mark_current=True)
+
+        remote_section = self._add_section(tree, "Remote", len(remote_names))
+        self._add_branch_tree(remote_section, K_REMOTE_BRANCH, remote_names, mark_current=False)
 
         tags_section = self._add_section(tree, "Tags", len(self._tags))
-        for name in self._tags:
-            item = QTreeWidgetItem([name, ""])
-            item.setData(0, _KIND_ROLE, K_TAG)
-            item.setData(0, _DATA_ROLE, name)
-            tags_section.addChild(item)
+        self._add_branch_tree(tags_section, K_TAG, self._tags, mark_current=False)
 
     def _build_gitflow_section(self, tree: QTreeWidget) -> None:
         status = self._gitflow
@@ -309,6 +300,54 @@ class SidebarPanel(QWidget):
                 self._mark_if_current(child, self._gitflow_full_name(kind, name))
                 folder.addChild(child)
             folder.setExpanded(True)
+
+    def _add_branch_tree(
+        self, parent: QTreeWidgetItem, kind: str, names: list[str], mark_current: bool
+    ) -> None:
+        """Regroupe des noms de branches/tags en dossiers selon les
+        segments séparés par '/' (ex: "origin/feature/x" -> origin >
+        feature > x), au lieu d'une liste plate de chaînes à rallonge."""
+        root: dict = {}
+        for name in names:
+            self._insert_branch_path(root, name.split("/"), name)
+        self._render_branch_tree(parent, root, kind, mark_current)
+
+    @staticmethod
+    def _insert_branch_path(node: dict, parts: list[str], full_name: str) -> None:
+        if len(parts) == 1:
+            node.setdefault("__leaves__", []).append((parts[0], full_name))
+            return
+        child = node.setdefault(parts[0], {})
+        SidebarPanel._insert_branch_path(child, parts[1:], full_name)
+
+    def _render_branch_tree(
+        self, parent: QTreeWidgetItem, node: dict, kind: str, mark_current: bool
+    ) -> None:
+        for key in sorted(k for k in node if k != "__leaves__"):
+            child_node = node[key]
+            folder = QTreeWidgetItem([key, str(self._count_leaves(child_node))])
+            folder.setForeground(0, QBrush(QColor(theme.TEXT_MUTED)))
+            folder.setForeground(1, QBrush(QColor(theme.TEXT_MUTED)))
+            folder.setTextAlignment(1, Qt.AlignRight | Qt.AlignVCenter)
+            parent.addChild(folder)
+            self._render_branch_tree(folder, child_node, kind, mark_current)
+            folder.setExpanded(True)
+
+        for label, full_name in sorted(node.get("__leaves__", [])):
+            item = QTreeWidgetItem([label, ""])
+            item.setData(0, _KIND_ROLE, kind)
+            item.setData(0, _DATA_ROLE, full_name)
+            if mark_current:
+                self._mark_if_current(item, full_name)
+            parent.addChild(item)
+
+    @staticmethod
+    def _count_leaves(node: dict) -> int:
+        total = len(node.get("__leaves__", []))
+        for key, child in node.items():
+            if key != "__leaves__":
+                total += SidebarPanel._count_leaves(child)
+        return total
 
     def _gitflow_full_name(self, kind: str, short_name: str) -> str:
         assert self._gitflow is not None
