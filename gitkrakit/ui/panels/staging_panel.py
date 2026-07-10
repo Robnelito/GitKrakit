@@ -6,7 +6,7 @@ commit. N'appelle jamais le backend directement : il émet des signaux
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QLabel,
@@ -23,9 +23,10 @@ from gitkrakit.core import FileStatus
 
 
 class StagingPanel(QWidget):
-    stage_requested = Signal(list)    # list[str] : chemins à indexer
-    unstage_requested = Signal(list)  # list[str] : chemins à désindexer
-    commit_requested = Signal(str)    # message de commit
+    stage_requested = Signal(list)      # list[str] : chemins à indexer
+    unstage_requested = Signal(list)    # list[str] : chemins à désindexer
+    commit_requested = Signal(str)      # message de commit
+    diff_requested = Signal(str, bool)  # (chemin, staged) : voir le diff
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -34,6 +35,9 @@ class StagingPanel(QWidget):
         layout.addWidget(QLabel("Fichiers modifiés (non indexés)"))
         self.unstaged_list = QListWidget()
         self.unstaged_list.setSelectionMode(QListWidget.ExtendedSelection)
+        self.unstaged_list.itemClicked.connect(
+            lambda item: self.diff_requested.emit(item.data(Qt.UserRole), False)
+        )
         layout.addWidget(self.unstaged_list)
 
         stage_btn = QPushButton("Indexer (stage) →")
@@ -43,6 +47,9 @@ class StagingPanel(QWidget):
         layout.addWidget(QLabel("Fichiers indexés (staged)"))
         self.staged_list = QListWidget()
         self.staged_list.setSelectionMode(QListWidget.ExtendedSelection)
+        self.staged_list.itemClicked.connect(
+            lambda item: self.diff_requested.emit(item.data(Qt.UserRole), True)
+        )
         layout.addWidget(self.staged_list)
 
         unstage_btn = QPushButton("← Désindexer (unstage)")
@@ -67,6 +74,7 @@ class StagingPanel(QWidget):
         list_widget.clear()
         for f in files:
             item = QListWidgetItem(f"[{f.status}] {f.path}")
+            item.setData(Qt.UserRole, f.path)
             color = theme.STATUS_COLORS.get(f.status)
             if color:
                 item.setForeground(QBrush(QColor(color)))
@@ -91,5 +99,4 @@ class StagingPanel(QWidget):
 
     @staticmethod
     def _selected_paths(list_widget: QListWidget) -> list[str]:
-        # "[modified] chemin/fichier.py" -> "chemin/fichier.py"
-        return [i.text().split("] ", 1)[-1] for i in list_widget.selectedItems()]
+        return [i.data(Qt.UserRole) for i in list_widget.selectedItems()]

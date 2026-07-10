@@ -6,6 +6,7 @@ commit, colorée selon leur état.
 """
 from __future__ import annotations
 
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QFrame,
@@ -21,8 +22,11 @@ from gitkrakit.core import CommitInfo, FileStatus
 
 
 class DetailsPanel(QWidget):
+    file_diff_requested = Signal(str, str)  # (sha, chemin)
+
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._current_sha: str | None = None
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
 
@@ -60,9 +64,15 @@ class DetailsPanel(QWidget):
         layout.addWidget(self.files_label)
 
         self.files_list = QListWidget()
+        self.files_list.itemClicked.connect(self._on_file_clicked)
         layout.addWidget(self.files_list, stretch=1)
 
+    def _on_file_clicked(self, item: QListWidgetItem) -> None:
+        if self._current_sha:
+            self.file_diff_requested.emit(self._current_sha, item.data(Qt.UserRole))
+
     def show_commit(self, commit: CommitInfo, files: list[FileStatus]) -> None:
+        self._current_sha = commit.sha
         self.sha_label.setText(f"commit : {commit.short_sha}")
         self.message_label.setText(commit.message)
         self.message_frame.show()
@@ -78,6 +88,7 @@ class DetailsPanel(QWidget):
         self.files_list.clear()
         for f in files:
             item = QListWidgetItem(f"[{f.status}] {f.path}")
+            item.setData(Qt.UserRole, f.path)
             color = theme.STATUS_COLORS.get(f.status)
             if color:
                 item.setForeground(QBrush(QColor(color)))

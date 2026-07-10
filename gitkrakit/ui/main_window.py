@@ -25,6 +25,7 @@ from gitkrakit.core import CommitInfo, GitBackend, GitBackendError
 from gitkrakit.ui.graph_view import GraphPanel
 from gitkrakit.ui.panels import (
     DetailsPanel,
+    DiffPanel,
     SidebarPanel,
     StagingPanel,
     TerminalDock,
@@ -117,10 +118,15 @@ class MainWindow(QMainWindow):
         self.staging_panel.stage_requested.connect(self._stage)
         self.staging_panel.unstage_requested.connect(self._unstage)
         self.staging_panel.commit_requested.connect(self._commit)
+        self.staging_panel.diff_requested.connect(self._show_working_diff)
         right_panel.addTab(self.staging_panel, "Staging")
 
         self.details_panel = DetailsPanel()
+        self.details_panel.file_diff_requested.connect(self._show_commit_diff)
         right_panel.addTab(self.details_panel, "Détails du commit")
+
+        self.diff_panel = DiffPanel()
+        right_panel.addTab(self.diff_panel, "Diff")
         self._right_panel = right_panel
 
         splitter.addWidget(right_panel)
@@ -276,6 +282,20 @@ class MainWindow(QMainWindow):
             files = []
         self.details_panel.show_commit(commit, files)
         self._right_panel.setCurrentWidget(self.details_panel)
+
+    def _show_working_diff(self, path: str, staged: bool) -> None:
+        diff = self.backend.diff_for_file(path, staged=staged)
+        origin = "indexé" if staged else "non indexé"
+        self.diff_panel.show_diff(f"{path}  ({origin})", diff)
+        self._right_panel.setCurrentWidget(self.diff_panel)
+
+    def _show_commit_diff(self, sha: str, path: str) -> None:
+        try:
+            diff = self.backend.diff_for_commit_file(sha, path)
+        except GitBackendError as exc:
+            diff = str(exc)
+        self.diff_panel.show_diff(f"{path}  (commit {sha[:7]})", diff)
+        self._right_panel.setCurrentWidget(self.diff_panel)
 
     def _run_terminal_command(self, args: list[str]) -> None:
         if not self.backend.is_open:

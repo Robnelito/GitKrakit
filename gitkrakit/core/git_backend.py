@@ -265,10 +265,33 @@ class GitBackend:
         self._require_repo()
         try:
             if staged:
-                return self.repo.git.diff("--cached", "--", path)
-            return self.repo.git.diff("--", path)
+                diff = self.repo.git.diff("--cached", "--", path)
+            else:
+                diff = self.repo.git.diff("--", path)
         except git.GitCommandError as exc:
             return f"(diff indisponible: {exc})"
+
+        if diff:
+            return diff
+
+        # fichier non suivi : git diff ne montre rien, on synthétise un
+        # pseudo-diff avec tout le contenu en ajout
+        full_path = Path(self.working_dir) / path
+        if not staged and path in self.repo.untracked_files and full_path.is_file():
+            try:
+                lines = full_path.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                return ""
+            return f"--- /dev/null\n+++ b/{path}\n" + "\n".join(f"+{l}" for l in lines)
+        return diff
+
+    def diff_for_commit_file(self, sha: str, path: str) -> str:
+        """Diff d'un fichier tel que modifié par un commit donné."""
+        self._require_repo()
+        try:
+            return self.repo.git.show("--format=", sha, "--", path)
+        except git.GitCommandError as exc:
+            raise GitBackendError(f"Diff indisponible pour {path}: {exc}") from exc
 
     def commit(self, message: str) -> None:
         self._require_repo()
