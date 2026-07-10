@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from gitkrakit import theme
+from gitkrakit.core import GitFlowStatus
 from gitkrakit.workspace import WorkspaceError, WorkspaceManager
 
 _KIND_ROLE = Qt.UserRole
@@ -37,12 +38,20 @@ K_LOCAL_BRANCH = "local-branch"
 K_REMOTE_BRANCH = "remote-branch"
 K_TAG = "tag"
 K_SECTION_WORKSPACES = "section-workspaces"
+K_SECTION_GITFLOW = "section-gitflow"
+K_GITFLOW_INIT = "gitflow-init"
+K_GF_FEATURE = "feature"
+K_GF_RELEASE = "release"
+K_GF_HOTFIX = "hotfix"
 
 
 class SidebarPanel(QWidget):
     open_repo_requested = Signal(str)
     checkout_requested = Signal(str)
     branch_delete_requested = Signal(str)
+    gitflow_init_requested = Signal()
+    gitflow_start_requested = Signal(str)        # kind: feature | release | hotfix
+    gitflow_finish_requested = Signal(str, str)  # (kind, nom court)
 
     def __init__(self, manager: WorkspaceManager, parent=None):
         super().__init__(parent)
@@ -51,6 +60,8 @@ class SidebarPanel(QWidget):
         self._remote: list[str] = []
         self._tags: list[str] = []
         self._current_branch = ""
+        self._gitflow: GitFlowStatus | None = None
+        self._repo_open = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -86,11 +97,14 @@ class SidebarPanel(QWidget):
         remote: list[str],
         tags: list[str],
         current_branch: str,
+        gitflow: GitFlowStatus | None = None,
     ) -> None:
         self._local = local
         self._remote = remote
         self._tags = tags
         self._current_branch = current_branch
+        self._gitflow = gitflow
+        self._repo_open = True
         self.refresh()
 
     def refresh(self) -> None:
@@ -111,17 +125,15 @@ class SidebarPanel(QWidget):
             for repo_path in self._manager.recent:
                 recent_section.addChild(self._repo_item(repo_path, K_RECENT))
 
+        if self._repo_open:
+            self._build_gitflow_section()
+
         local_section = self._add_section("Local", len(self._local))
         for name in self._local:
             item = QTreeWidgetItem([name, ""])
             item.setData(0, _KIND_ROLE, K_LOCAL_BRANCH)
             item.setData(0, _DATA_ROLE, name)
-            if name == self._current_branch:
-                item.setText(0, f"✓ {name}")
-                item.setForeground(0, QBrush(QColor(theme.ACCENT)))
-                font = item.font(0)
-                font.setBold(True)
-                item.setFont(0, font)
+            self._mark_if_current(item, name)
             local_section.addChild(item)
 
         remote_section = self._add_section("Remote", len(self._remote))
@@ -139,6 +151,64 @@ class SidebarPanel(QWidget):
             tags_section.addChild(item)
 
         self._apply_filter(self.filter_edit.text())
+
+    def _build_gitflow_section(self) -> None:
+        status = self._gitflow
+
+        if status is None:
+            section = self._add_section("Gitflow", 0)
+            section.setData(0, _KIND_ROLE, K_SECTION_GITFLOW)
+            init_item = QTreeWidgetItem(["Initialiser Git Flow…", ""])
+            init_item.setData(0, _KIND_ROLE, K_GITFLOW_INIT)
+            init_item.setForeground(0, QBrush(QColor(theme.ACCENT)))
+            section.addChild(init_item)
+            return
+
+        total = len(status.features) + len(status.releases) + len(status.hotfixes)
+        section = self._add_section("Gitflow", total)
+        section.setData(0, _KIND_ROLE, K_SECTION_GITFLOW)
+
+        for branch in (status.config.develop, status.config.main):
+            item = QTreeWidgetItem([branch, ""])
+            item.setData(0, _KIND_ROLE, K_LOCAL_BRANCH)
+            item.setData(0, _DATA_ROLE, branch)
+            self._mark_if_current(item, branch)
+            section.addChild(item)
+
+        for kind, label, names in (
+            (K_GF_FEATURE, "feature", status.features),
+            (K_GF_RELEASE, "release", status.releases),
+            (K_GF_HOTFIX, "hotfix", status.hotfixes),
+        ):
+            folder = QTreeWidgetItem([label, str(len(names)) if names else ""])
+            folder.setForeground(0, QBrush(QColor(theme.TEXT_MUTED)))
+            folder.setForeground(1, QBrush(QColor(theme.TEXT_MUTED)))
+            folder.setTextAlignment(1, Qt.AlignRight | Qt.AlignVCenter)
+            section.addChild(folder)
+            for name in names:
+                child = QTreeWidgetItem([name, ""])
+                child.setData(0, _KIND_ROLE, kind)
+                child.setData(0, _DATA_ROLE, name)
+                self._mark_if_current(child, self._gitflow_full_name(kind, name))
+                folder.addChild(child)
+            folder.setExpanded(True)
+
+    def _gitflow_full_name(self, kind: str, short_name: str) -> str:
+        assert self._gitflow is not None
+        prefix = {
+            K_GF_FEATURE: self._gitflow.config.feature_prefix,
+            K_GF_RELEASE: self._gitflow.config.release_prefix,
+            K_GF_HOTFIX: self._gitflow.config.hotfix_prefix,
+        }[kind]
+        return prefix + short_name
+
+    def _mark_if_current(self, item: QTreeWidgetItem, branch: str) -> None:
+        if branch == self._current_branch:
+            item.setText(0, f"✓ {item.text(0)}")
+            item.setForeground(0, QBrush(QColor(theme.ACCENT)))
+            font = item.font(0)
+            font.setBold(True)
+            item.setFont(0, font)
 
     def _add_section(self, title: str, count: int) -> QTreeWidgetItem:
         item = QTreeWidgetItem([title.upper(), str(count) if count else ""])
@@ -194,6 +264,10 @@ class SidebarPanel(QWidget):
             self.open_repo_requested.emit(data)
         elif kind == K_LOCAL_BRANCH:
             self.checkout_requested.emit(data)
+        elif kind in (K_GF_FEATURE, K_GF_RELEASE, K_GF_HOTFIX):
+            self.checkout_requested.emit(self._gitflow_full_name(kind, data))
+        elif kind == K_GITFLOW_INIT:
+            self.gitflow_init_requested.emit()
 
     def _show_context_menu(self, pos) -> None:
         item = self.tree.itemAt(pos)
@@ -220,6 +294,31 @@ class SidebarPanel(QWidget):
         elif kind == K_LOCAL_BRANCH:
             menu.addAction("Checkout", lambda: self.checkout_requested.emit(data))
             menu.addAction("Supprimer la branche", lambda: self._confirm_delete_branch(data))
+        elif kind == K_SECTION_GITFLOW:
+            if self._gitflow is None:
+                menu.addAction("Initialiser Git Flow…", self.gitflow_init_requested.emit)
+            else:
+                menu.addAction(
+                    "Démarrer une feature…", lambda: self.gitflow_start_requested.emit(K_GF_FEATURE)
+                )
+                menu.addAction(
+                    "Démarrer une release…", lambda: self.gitflow_start_requested.emit(K_GF_RELEASE)
+                )
+                menu.addAction(
+                    "Démarrer un hotfix…", lambda: self.gitflow_start_requested.emit(K_GF_HOTFIX)
+                )
+        elif kind == K_GITFLOW_INIT:
+            menu.addAction("Initialiser Git Flow…", self.gitflow_init_requested.emit)
+        elif kind in (K_GF_FEATURE, K_GF_RELEASE, K_GF_HOTFIX):
+            full = self._gitflow_full_name(kind, data)
+            finish_label = {
+                K_GF_FEATURE: "Terminer la feature (merge dans develop)",
+                K_GF_RELEASE: "Terminer la release (merge main + develop, tag)",
+                K_GF_HOTFIX: "Terminer le hotfix (merge main + develop, tag)",
+            }[kind]
+            menu.addAction("Checkout", lambda: self.checkout_requested.emit(full))
+            menu.addAction(finish_label, lambda: self.gitflow_finish_requested.emit(kind, data))
+            menu.addAction("Supprimer la branche", lambda: self._confirm_delete_branch(full))
         else:
             return
 

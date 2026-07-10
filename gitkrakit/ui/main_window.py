@@ -14,14 +14,16 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QFileDialog,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QInputDialog,
     QSplitter,
     QTabWidget,
     QToolBar,
+    QToolButton,
 )
 
-from gitkrakit.core import CommitInfo, GitBackend, GitBackendError
+from gitkrakit.core import CommitInfo, GitBackend, GitBackendError, GitFlow
 from gitkrakit.ui.graph_view import GraphPanel
 from gitkrakit.ui.panels import (
     DetailsPanel,
@@ -40,6 +42,7 @@ class MainWindow(QMainWindow):
         self.resize(1280, 800)
 
         self.backend = GitBackend()
+        self.gitflow = GitFlow(self.backend)
         self.workspace_manager = WorkspaceManager()
         self._commits_by_sha: dict[str, CommitInfo] = {}
         self._last_refresh = 0.0
@@ -81,6 +84,18 @@ class MainWindow(QMainWindow):
         branch_action.triggered.connect(self.create_branch_dialog)
         toolbar.addAction(branch_action)
 
+        gitflow_menu = QMenu("Git Flow", self)
+        gitflow_menu.addAction("Initialiser Git Flow…", self._gitflow_init)
+        gitflow_menu.addSeparator()
+        gitflow_menu.addAction("Démarrer une feature…", lambda: self._gitflow_start("feature"))
+        gitflow_menu.addAction("Démarrer une release…", lambda: self._gitflow_start("release"))
+        gitflow_menu.addAction("Démarrer un hotfix…", lambda: self._gitflow_start("hotfix"))
+        gitflow_button = QToolButton()
+        gitflow_button.setText("Git Flow")
+        gitflow_button.setMenu(gitflow_menu)
+        gitflow_button.setPopupMode(QToolButton.InstantPopup)
+        toolbar.addWidget(gitflow_button)
+
         stash_action = QAction("Stash", self)
         stash_action.triggered.connect(lambda: self._run_backend_op(self.backend.stash))
         toolbar.addAction(stash_action)
@@ -104,6 +119,9 @@ class MainWindow(QMainWindow):
         self.sidebar.open_repo_requested.connect(self.open_repo)
         self.sidebar.checkout_requested.connect(self._checkout_branch)
         self.sidebar.branch_delete_requested.connect(self._delete_branch)
+        self.sidebar.gitflow_init_requested.connect(self._gitflow_init)
+        self.sidebar.gitflow_start_requested.connect(self._gitflow_start)
+        self.sidebar.gitflow_finish_requested.connect(self._gitflow_finish)
         splitter.addWidget(self.sidebar)
 
         # --- centre : graphe de commits ---
@@ -185,6 +203,7 @@ class MainWindow(QMainWindow):
                 remote=self.backend.remote_branches(),
                 tags=self.backend.tags(),
                 current_branch=self.backend.current_branch,
+                gitflow=self.gitflow.status(),
             )
             commits = self.backend.commit_log()
             self._commits_by_sha = {c.sha: c for c in commits}
@@ -259,9 +278,9 @@ class MainWindow(QMainWindow):
         self.staging_panel.clear_message()
         self.refresh_all()
 
-    def _run_backend_op(self, fn) -> None:
+    def _run_backend_op(self, fn, done_message: str | None = None) -> None:
         """Opération backend qui retourne un message de statut (fetch, pull,
-        push, stash…) : affiche le résultat dans la barre de statut."""
+        push, stash, git flow…) : affiche le résultat dans la barre de statut."""
         if not self.backend.is_open:
             return
         try:
@@ -269,7 +288,9 @@ class MainWindow(QMainWindow):
         except GitBackendError as exc:
             QMessageBox.critical(self, "Erreur", str(exc))
             return
-        self.statusBar().showMessage(result, 5000)
+        message = done_message or (result if isinstance(result, str) else "")
+        if message:
+            self.statusBar().showMessage(message, 5000)
         self.refresh_all()
 
     def show_commit_details(self, sha: str) -> None:
@@ -282,6 +303,71 @@ class MainWindow(QMainWindow):
             files = []
         self.details_panel.show_commit(commit, files)
         self._right_panel.setCurrentWidget(self.details_panel)
+
+    # ------------------------------------------------------------------
+    # Git Flow
+    # ------------------------------------------------------------------
+    def _gitflow_init(self) -> None:
+        if not self.backend.is_open:
+            return
+        if self.gitflow.is_initialized():
+            QMessageBox.information(self, "Git Flow", "Git Flow est déjà initialisé.")
+            return
+        answer = QMessageBox.question(
+            self,
+            "Initialiser Git Flow",
+            "Initialiser Git Flow avec les valeurs par défaut ?\n\n"
+            "  branche de production : main (ou master)\n"
+            "  branche d'intégration : develop (créée si absente)\n"
+            "  préfixes : feature/  release/  hotfix/",
+        )
+        if answer != QMessageBox.Yes:
+            return
+        self._run_backend_op(self.gitflow.init, done_message="Git Flow initialisé — branche develop")
+
+    def _gitflow_start(self, kind: str) -> None:
+        if not self.backend.is_open:
+            return
+        if not self.gitflow.is_initialized():
+            self._gitflow_init()
+            if not self.gitflow.is_initialized():
+                return
+        prompts = {
+            "feature": ("Nouvelle feature", "Nom de la feature :", self.gitflow.feature_start),
+            "release": ("Nouvelle release", "Version (ex: 1.2.0) :", self.gitflow.release_start),
+            "hotfix": ("Nouveau hotfix", "Version (ex: 1.2.1) :", self.gitflow.hotfix_start),
+        }
+        title, label, start_fn = prompts[kind]
+        name, ok = QInputDialog.getText(self, title, label)
+        if not ok or not name.strip():
+            return
+        self._run_backend_op(lambda: start_fn(name))
+
+    def _gitflow_finish(self, kind: str, name: str) -> None:
+        confirmations = {
+            "feature": (
+                f"Terminer la feature '{name}' ?\n\n"
+                "→ merge dans develop puis suppression de la branche.",
+                self.gitflow.feature_finish,
+            ),
+            "release": (
+                f"Terminer la release '{name}' ?\n\n"
+                f"→ merge dans main, tag '{name}', merge dans develop,\n"
+                "puis suppression de la branche.",
+                self.gitflow.release_finish,
+            ),
+            "hotfix": (
+                f"Terminer le hotfix '{name}' ?\n\n"
+                f"→ merge dans main, tag '{name}', merge dans develop,\n"
+                "puis suppression de la branche.",
+                self.gitflow.hotfix_finish,
+            ),
+        }
+        message, finish_fn = confirmations[kind]
+        answer = QMessageBox.question(self, "Git Flow", message)
+        if answer != QMessageBox.Yes:
+            return
+        self._run_backend_op(lambda: finish_fn(name))
 
     def _show_working_diff(self, path: str, staged: bool) -> None:
         diff = self.backend.diff_for_file(path, staged=staged)

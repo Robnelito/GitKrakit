@@ -6,6 +6,7 @@ from gitkrakit.core.git_backend import (
     GitBackend,
     GitBackendError,
 )
+from gitkrakit.core.gitflow import GitFlow, GitFlowConfig, GitFlowStatus
 from gitkrakit.core.graph_model import GraphLayout, GraphNode
 
 __all__ = [
@@ -13,6 +14,9 @@ __all__ = [
     "FileStatus",
     "GitBackend",
     "GitBackendError",
+    "GitFlow",
+    "GitFlowConfig",
+    "GitFlowStatus",
     "GraphLayout",
     "GraphNode",
 ]
