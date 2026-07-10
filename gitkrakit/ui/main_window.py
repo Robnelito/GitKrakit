@@ -7,7 +7,9 @@ logique Git et la gestion d'erreurs sont centralisées ici.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+import time
+
+from PySide6.QtCore import Qt, QEvent
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -39,6 +41,7 @@ class MainWindow(QMainWindow):
         self.backend = GitBackend()
         self.workspace_manager = WorkspaceManager()
         self._commits_by_sha: dict[str, CommitInfo] = {}
+        self._last_refresh = 0.0
 
         self._build_toolbar()
         self._build_central_widget()
@@ -88,7 +91,8 @@ class MainWindow(QMainWindow):
         toolbar.addSeparator()
 
         refresh_action = QAction("Rafraîchir", self)
-        refresh_action.triggered.connect(self.refresh_all)
+        # lambda : triggered émet un bool (checked) qui écraserait show_errors
+        refresh_action.triggered.connect(lambda: self.refresh_all())
         toolbar.addAction(refresh_action)
 
     def _build_central_widget(self) -> None:
@@ -151,7 +155,22 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Rafraîchissement
     # ------------------------------------------------------------------
-    def refresh_all(self) -> None:
+    def event(self, event) -> bool:
+        # rafraîchissement auto quand la fenêtre reprend le focus (fichiers
+        # modifiés dans un éditeur externe, commits faits en ligne de commande…)
+        if (
+            event.type() == QEvent.WindowActivate
+            and self.backend.is_open
+            and time.monotonic() - self._last_refresh > 1.0
+        ):
+            self.refresh_all(show_errors=False)
+        return super().event(event)
+
+    def refresh_all(self, show_errors: bool = True) -> None:
+        """Recharge branches, graphe et statut. Avec show_errors=False
+        (rafraîchissement auto), les erreurs vont dans la barre de statut au
+        lieu d'un dialogue — sinon fermer le dialogue redonnerait le focus à
+        la fenêtre et relancerait le rafraîchissement en boucle."""
         if not self.backend.is_open:
             return
         try:
@@ -166,7 +185,13 @@ class MainWindow(QMainWindow):
             self.graph_panel.set_commits(commits)
             self._refresh_status()
         except GitBackendError as exc:
-            QMessageBox.critical(self, "Erreur", str(exc))
+            if show_errors:
+                QMessageBox.critical(self, "Erreur", str(exc))
+            else:
+                self.statusBar().showMessage(f"Rafraîchissement échoué : {exc}", 5000)
+            return
+        finally:
+            self._last_refresh = time.monotonic()
         self.statusBar().showMessage(f"Branche courante : {self.backend.current_branch}")
 
     def _refresh_status(self) -> None:

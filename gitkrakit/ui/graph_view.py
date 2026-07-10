@@ -146,8 +146,13 @@ class GraphView(QGraphicsView):
         self._chip_font = QFont("Segoe UI", 8)
 
     def set_commits(self, commits) -> None:
+        # préserver la position de défilement (rafraîchissement auto)
+        v_scroll = self.verticalScrollBar().value()
+        h_scroll = self.horizontalScrollBar().value()
         self._graph_layout = GraphLayout(commits)
         self._redraw()
+        self.verticalScrollBar().setValue(v_scroll)
+        self.horizontalScrollBar().setValue(h_scroll)
 
     def select_commit(self, sha: str) -> None:
         previous = self._rows.get(self.selected_sha)
