@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import time
 
-from PySide6.QtCore import Qt, QEvent, QSize
+from PySide6.QtCore import Qt, QEvent, QSize, QThread, QTimer, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -40,6 +40,28 @@ from gitkrakit.ui.panels import (
 )
 from gitkrakit.workspace import WorkspaceManager
 
+AUTO_FETCH_INTERVAL_MS = 5 * 60 * 1000  # 5 minutes
+
+
+class _FetchThread(QThread):
+    """Exécute GitBackend.fetch() hors du thread UI, pour que le fetch
+    automatique périodique ne gèle jamais la fenêtre (accès réseau)."""
+
+    succeeded = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, backend: GitBackend, parent=None):
+        super().__init__(parent)
+        self._backend = backend
+
+    def run(self) -> None:
+        try:
+            result = self._backend.fetch()
+        except GitBackendError as exc:
+            self.failed.emit(str(exc))
+        else:
+            self.succeeded.emit(result)
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -48,6 +70,7 @@ class MainWindow(QMainWindow):
         self.resize(1280, 800)
 
         self.backend = GitBackend()
+        self._fetch_thread: _FetchThread | None = None
         self.gitflow = GitFlow(self.backend)
         self.workspace_manager = WorkspaceManager()
         self._commits_by_sha: dict[str, CommitInfo] = {}
@@ -57,7 +80,17 @@ class MainWindow(QMainWindow):
         self._build_central_widget()
         self._build_terminal_dock()
 
+        self._auto_fetch_timer = QTimer(self)
+        self._auto_fetch_timer.setInterval(AUTO_FETCH_INTERVAL_MS)
+        self._auto_fetch_timer.timeout.connect(self._auto_fetch)
+        self._auto_fetch_timer.start()
+
         self.statusBar().showMessage("Ouvre un dépôt pour commencer (Ouvrir un dépôt)")
+
+    def closeEvent(self, event) -> None:
+        if self._fetch_thread is not None and self._fetch_thread.isRunning():
+            self._fetch_thread.wait(2000)
+        super().closeEvent(event)
 
     # ------------------------------------------------------------------
     # Construction UI
@@ -234,6 +267,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(f"GitKrakit — {path}")
         self._close_diff()  # un diff affiché appartient à l'ancien dépôt
         self.refresh_all()
+        self._auto_fetch()
 
     # ------------------------------------------------------------------
     # Rafraîchissement
@@ -263,6 +297,7 @@ class MainWindow(QMainWindow):
                 tags=self.backend.tags(),
                 current_branch=self.backend.current_branch,
                 gitflow=self.gitflow.status(),
+                ahead_behind=self.backend.branch_ahead_behind(),
             )
             commits = self.backend.commit_log()
             self._commits_by_sha = {c.sha: c for c in commits}
@@ -281,6 +316,32 @@ class MainWindow(QMainWindow):
     def _refresh_status(self) -> None:
         staged, unstaged = self.backend.status()
         self.staging_panel.update_status(staged, unstaged)
+
+    # ------------------------------------------------------------------
+    # Fetch automatique
+    # ------------------------------------------------------------------
+    def _auto_fetch(self) -> None:
+        """Fetch périodique en arrière-plan : ne bloque jamais l'UI, et ne
+        démarre pas un second fetch si un précédent est encore en cours."""
+        if not self.backend.is_open:
+            return
+        if self._fetch_thread is not None and self._fetch_thread.isRunning():
+            return
+        self._fetch_thread = _FetchThread(self.backend, self)
+        self._fetch_thread.succeeded.connect(self._on_auto_fetch_succeeded)
+        self._fetch_thread.failed.connect(self._on_auto_fetch_failed)
+        self._fetch_thread.start()
+
+    def _on_auto_fetch_succeeded(self, message: str) -> None:
+        self.statusBar().showMessage(f"Fetch auto : {message}", 4000)
+        # les branches distantes ont pu bouger : rafraîchit les indicateurs
+        # ↓pull/↑push et le graphe, sans dialogue d'erreur intrusif
+        self.refresh_all(show_errors=False)
+
+    def _on_auto_fetch_failed(self, message: str) -> None:
+        # échec silencieux (pas de réseau, remote inaccessible…) : un
+        # fetch auto qui échoue ne doit jamais interrompre l'utilisateur
+        self.statusBar().showMessage(f"Fetch auto échoué : {message}", 4000)
 
     # ------------------------------------------------------------------
     # Actions Git

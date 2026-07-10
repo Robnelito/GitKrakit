@@ -73,7 +73,7 @@ def _make_tree() -> QTreeWidget:
     tree.header().setStretchLastSection(False)
     tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
     tree.header().setSectionResizeMode(1, QHeaderView.Fixed)
-    tree.header().resizeSection(1, 36)
+    tree.header().resizeSection(1, 52)
     return tree
 
 
@@ -121,6 +121,7 @@ class SidebarPanel(QWidget):
         self._gitflow: GitFlowStatus | None = None
         self._repo_open = False
         self._active_repo_path: str | None = None
+        self._ahead_behind: dict[str, tuple[int, int]] = {}
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -190,12 +191,14 @@ class SidebarPanel(QWidget):
         tags: list[str],
         current_branch: str,
         gitflow: GitFlowStatus | None = None,
+        ahead_behind: dict[str, tuple[int, int]] | None = None,
     ) -> None:
         self._local = local
         self._remote = remote
         self._tags = tags
         self._current_branch = current_branch
         self._gitflow = gitflow
+        self._ahead_behind = ahead_behind or {}
         self._repo_open = True
         self.refresh()
 
@@ -281,6 +284,7 @@ class SidebarPanel(QWidget):
             item.setData(0, _KIND_ROLE, K_LOCAL_BRANCH)
             item.setData(0, _DATA_ROLE, branch)
             self._mark_if_current(item, branch)
+            self._set_sync_badge(item, branch)
             section.addChild(item)
 
         for kind, label, names in (
@@ -297,7 +301,9 @@ class SidebarPanel(QWidget):
                 child = QTreeWidgetItem([name, ""])
                 child.setData(0, _KIND_ROLE, kind)
                 child.setData(0, _DATA_ROLE, name)
-                self._mark_if_current(child, self._gitflow_full_name(kind, name))
+                full_name = self._gitflow_full_name(kind, name)
+                self._mark_if_current(child, full_name)
+                self._set_sync_badge(child, full_name)
                 folder.addChild(child)
             folder.setExpanded(True)
 
@@ -339,6 +345,7 @@ class SidebarPanel(QWidget):
             item.setData(0, _DATA_ROLE, full_name)
             if mark_current:
                 self._mark_if_current(item, full_name)
+                self._set_sync_badge(item, full_name)
             parent.addChild(item)
 
     @staticmethod
@@ -383,6 +390,38 @@ class SidebarPanel(QWidget):
             font = item.font(0)
             font.setBold(True)
             item.setFont(0, font)
+
+    def _set_sync_badge(self, item: QTreeWidgetItem, branch_name: str) -> None:
+        """Ajoute, dans la colonne de droite, un indicateur ↓N/↑N quand la
+        branche a divergé de son amont (nécessite pull/push). Rien si elle
+        n'a pas d'amont ou si elle est déjà à jour."""
+        ahead, behind = self._ahead_behind.get(branch_name, (0, 0))
+        if not ahead and not behind:
+            return
+
+        parts = []
+        if behind:
+            parts.append(f"↓{behind}")  # ↓N : à tirer (pull)
+        if ahead:
+            parts.append(f"↑{ahead}")  # ↑N : à pousser (push)
+
+        if behind and ahead:
+            color = theme.LANE_COLORS[4]  # violet : a divergé (pull ET push)
+            tip = f"{behind} commit(s) à tirer, {ahead} à pousser — la branche a divergé"
+        elif behind:
+            color = theme.LANE_COLORS[2]  # orange : pull nécessaire
+            tip = f"{behind} commit(s) en retard sur l'amont — pull nécessaire"
+        else:
+            color = theme.LANE_COLORS[0]  # vert : push nécessaire
+            tip = f"{ahead} commit(s) en avance sur l'amont — push nécessaire"
+
+        item.setText(1, " ".join(parts))
+        item.setForeground(1, QBrush(QColor(color)))
+        font = item.font(1)
+        font.setBold(True)
+        item.setFont(1, font)
+        item.setTextAlignment(1, Qt.AlignRight | Qt.AlignVCenter)
+        item.setToolTip(1, tip)
 
     @staticmethod
     def _add_section(tree: QTreeWidget, title: str, count: int) -> QTreeWidgetItem:
