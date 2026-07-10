@@ -166,37 +166,68 @@ class GitBackend:
     # ------------------------------------------------------------------
     # Staging / status
     # ------------------------------------------------------------------
+    _STATUS_LABELS = {
+        "M": "modified",
+        "A": "added",
+        "D": "deleted",
+        "R": "renamed",
+        "C": "copied",
+        "U": "conflict",
+        "T": "typechange",
+    }
+
     def status(self) -> tuple[list[FileStatus], list[FileStatus]]:
-        """Retourne (staged, unstaged)."""
+        """Retourne (staged, unstaged), via `git status --porcelain`.
+
+        Le format porcelain donne deux colonnes par ligne : X = état dans
+        l'index, Y = état dans le répertoire de travail. C'est la seule
+        source fiable qui couvre aussi les suppressions et les renommages.
+        """
         self._require_repo()
         staged: list[FileStatus] = []
         unstaged: list[FileStatus] = []
 
-        diff_staged = self.repo.index.diff("HEAD") if self.repo.head.is_valid() else []
-        for d in diff_staged:
-            staged.append(FileStatus(path=d.a_path or d.b_path, status=self._diff_status(d)))
+        try:
+            output = self.repo.git.status("--porcelain")
+        except git.GitCommandError as exc:
+            raise GitBackendError(f"Échec du status: {exc}") from exc
 
-        diff_unstaged = self.repo.index.diff(None)
-        for d in diff_unstaged:
-            unstaged.append(FileStatus(path=d.a_path or d.b_path, status=self._diff_status(d)))
-
-        for path in self.repo.untracked_files:
-            unstaged.append(FileStatus(path=path, status="untracked"))
+        for line in output.splitlines():
+            if len(line) < 4:
+                continue
+            x, y, rest = line[0], line[1], line[3:]
+            # renommage : "R  ancien -> nouveau" — on garde le nouveau chemin
+            path = rest.split(" -> ", 1)[-1].strip().strip('"')
+            if x == "?" or y == "?":
+                unstaged.append(FileStatus(path=path, status="untracked"))
+                continue
+            if x != " ":
+                staged.append(FileStatus(path=path, status=self._STATUS_LABELS.get(x, x)))
+            if y != " ":
+                unstaged.append(FileStatus(path=path, status=self._STATUS_LABELS.get(y, y)))
 
         return staged, unstaged
 
-    @staticmethod
-    def _diff_status(d) -> str:
-        mapping = {"M": "modified", "A": "added", "D": "deleted", "R": "renamed"}
-        return mapping.get(d.change_type, d.change_type)
-
     def stage(self, paths: list[str]) -> None:
+        """Indexe les chemins donnés, y compris les fichiers supprimés
+        (index.add() de GitPython échoue sur un fichier absent du disque,
+        d'où le passage par `git add -A`)."""
         self._require_repo()
-        self.repo.index.add(paths)
+        try:
+            self.repo.git.add("-A", "--", *paths)
+        except git.GitCommandError as exc:
+            raise GitBackendError(f"Échec de l'indexation: {exc}") from exc
 
     def unstage(self, paths: list[str]) -> None:
         self._require_repo()
-        self.repo.index.reset(paths=paths)
+        try:
+            if self.repo.head.is_valid():
+                self.repo.git.reset("HEAD", "--", *paths)
+            else:
+                # dépôt sans commit : pas de HEAD, on retire du cache
+                self.repo.git.rm("--cached", "--", *paths)
+        except git.GitCommandError as exc:
+            raise GitBackendError(f"Échec de la désindexation: {exc}") from exc
 
     def diff_for_file(self, path: str, staged: bool = False) -> str:
         self._require_repo()

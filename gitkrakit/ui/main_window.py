@@ -192,11 +192,17 @@ class MainWindow(QMainWindow):
         self.refresh_all()
 
     def _stage(self, paths: list[str]) -> None:
-        self.backend.stage(paths)
+        try:
+            self.backend.stage(paths)
+        except GitBackendError as exc:
+            QMessageBox.critical(self, "Erreur", str(exc))
         self._refresh_status()
 
     def _unstage(self, paths: list[str]) -> None:
-        self.backend.unstage(paths)
+        try:
+            self.backend.unstage(paths)
+        except GitBackendError as exc:
+            QMessageBox.critical(self, "Erreur", str(exc))
         self._refresh_status()
 
     def _commit(self, message: str) -> None:

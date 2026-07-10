@@ -7,6 +7,7 @@ commit. N'appelle jamais le backend directement : il émet des signaux
 from __future__ import annotations
 
 from PySide6.QtCore import Signal
+from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
@@ -17,6 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from gitkrakit import theme
 from gitkrakit.core import FileStatus
 
 
@@ -57,12 +59,18 @@ class StagingPanel(QWidget):
         layout.addWidget(commit_btn)
 
     def update_status(self, staged: list[FileStatus], unstaged: list[FileStatus]) -> None:
-        self.staged_list.clear()
-        for f in staged:
-            self.staged_list.addItem(QListWidgetItem(f"[{f.status}] {f.path}"))
-        self.unstaged_list.clear()
-        for f in unstaged:
-            self.unstaged_list.addItem(QListWidgetItem(f"[{f.status}] {f.path}"))
+        self._fill(self.staged_list, staged)
+        self._fill(self.unstaged_list, unstaged)
+
+    @staticmethod
+    def _fill(list_widget: QListWidget, files: list[FileStatus]) -> None:
+        list_widget.clear()
+        for f in files:
+            item = QListWidgetItem(f"[{f.status}] {f.path}")
+            color = theme.STATUS_COLORS.get(f.status)
+            if color:
+                item.setForeground(QBrush(QColor(color)))
+            list_widget.addItem(item)
 
     def clear_message(self) -> None:
         self.commit_message_edit.clear()
