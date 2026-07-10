@@ -130,12 +130,15 @@ class GraphView(QGraphicsView):
         self.setScene(self._scene)
         self.setRenderHint(QPainter.Antialiasing)
         self.setRenderHint(QPainter.TextAntialiasing)
+        # sans ça, Qt centre la scène quand elle est plus petite que la vue
+        self.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.setBackgroundBrush(QBrush(QColor(theme.BACKGROUND)))
 
         self._graph_layout: GraphLayout | None = None
         self._rows: dict[str, CommitRowItem] = {}
+        self._content_width = 0.0
         self.selected_sha: str | None = None
         self.graph_col_width = 120  # exposé pour aligner l'en-tête de colonnes
 
@@ -215,7 +218,27 @@ class GraphView(QGraphicsView):
             self._draw_text(date_text, self._ui_font, theme.TEXT_MUTED, date_x, y_center)
 
         total_height = len(layout.nodes) * ROW_HEIGHT + ROW_HEIGHT / 2
+        self._content_width = total_width
         self._scene.setSceneRect(QRectF(0, 0, total_width, total_height))
+        self._stretch_rows()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._stretch_rows()
+
+    def _stretch_rows(self) -> None:
+        """Étire les fonds de ligne jusqu'au bord droit de la vue quand le
+        contenu est plus étroit que le viewport (façon table pleine largeur)."""
+        if not self._rows:
+            return
+        width = max(self._content_width, float(self.viewport().width()))
+        for row in self._rows.values():
+            rect = row.rect()
+            rect.setWidth(width)
+            row.setRect(rect)
+        scene_rect = self._scene.sceneRect()
+        scene_rect.setWidth(width)
+        self._scene.setSceneRect(scene_rect)
 
     def _draw_refs(self, node: GraphNode, y_center: float) -> None:
         """Pastilles branche/tag dans la colonne de gauche ; au-delà de
@@ -282,29 +305,34 @@ class GraphPanel(QWidget):
         header.setStyleSheet(
             f"background-color: {theme.PANEL_BG}; border-bottom: 1px solid {theme.BORDER};"
         )
+        # colonnes alignées sur les positions x de la scène (spacing 0,
+        # largeurs identiques à celles utilisées dans GraphView._redraw)
         header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(6, 4, 6, 4)
+        header_layout.setContentsMargins(0, 4, 0, 4)
+        header_layout.setSpacing(0)
 
         def col_label(text: str) -> QLabel:
             label = QLabel(text.upper())
             label.setStyleSheet(
                 f"color: {theme.TEXT_MUTED}; font-size: 8pt; font-weight: bold;"
-                "background: transparent; border: none;"
+                "background: transparent; border: none; padding-left: 6px;"
             )
             return label
 
         self._ref_header = col_label("Branche / Tag")
-        self._ref_header.setFixedWidth(REF_COL_WIDTH)
+        self._ref_header.setFixedWidth(REF_COL_WIDTH + 12)
         header_layout.addWidget(self._ref_header)
 
         self._graph_header = col_label("Graphe")
         self._graph_header.setFixedWidth(120)
         header_layout.addWidget(self._graph_header)
 
-        header_layout.addWidget(col_label("Message de commit"), stretch=1)
-        date_header = col_label("Date / Heure")
-        date_header.setFixedWidth(DATE_COL_WIDTH)
-        header_layout.addWidget(date_header)
+        message_header = col_label("Message de commit")
+        message_header.setFixedWidth(MSG_COL_WIDTH + 12)
+        header_layout.addWidget(message_header)
+
+        header_layout.addWidget(col_label("Date / Heure"))
+        header_layout.addStretch(1)
 
         layout.addWidget(header)
 
