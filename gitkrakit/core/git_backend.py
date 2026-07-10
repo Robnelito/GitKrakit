@@ -229,6 +229,38 @@ class GitBackend:
         except git.GitCommandError as exc:
             raise GitBackendError(f"Échec de la désindexation: {exc}") from exc
 
+    def commit_files(self, sha: str) -> list[FileStatus]:
+        """Fichiers modifiés par un commit (pour le panneau de détails)."""
+        self._require_repo()
+        try:
+            output = self.repo.git.show("--name-status", "--format=", sha)
+        except git.GitCommandError as exc:
+            raise GitBackendError(f"Impossible de lire le commit {sha[:7]}: {exc}") from exc
+
+        files: list[FileStatus] = []
+        for line in output.splitlines():
+            if not line.strip():
+                continue
+            parts = line.split("\t")
+            code = parts[0][:1]  # "R100" -> "R"
+            path = parts[-1]
+            files.append(FileStatus(path=path, status=self._STATUS_LABELS.get(code, code)))
+        return files
+
+    def stash(self) -> str:
+        self._require_repo()
+        try:
+            return self.repo.git.stash("push") or "Stash OK"
+        except git.GitCommandError as exc:
+            raise GitBackendError(f"Échec du stash: {exc}") from exc
+
+    def stash_pop(self) -> str:
+        self._require_repo()
+        try:
+            return self.repo.git.stash("pop")
+        except git.GitCommandError as exc:
+            raise GitBackendError(f"Échec du stash pop: {exc}") from exc
+
     def diff_for_file(self, path: str, staged: bool = False) -> str:
         self._require_repo()
         try:

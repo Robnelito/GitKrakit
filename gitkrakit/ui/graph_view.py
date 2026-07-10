@@ -1,10 +1,11 @@
 """
 graph_view.py
-Rendu graphique du graphe de commits (QGraphicsView) : un cercle par
-commit, des lignes reliant chaque commit à ses parents, colorées par lane,
-les refs (branches/tags) en pastilles colorées, puis sha/message/auteur.
-Cliquer sur un commit émet un signal avec son sha pour que la fenêtre
-principale affiche les détails.
+Rendu du graphe de commits façon GitKraken : chaque commit occupe une
+ligne pleine largeur découpée en colonnes — pastilles branche/tag,
+lanes du graphe, message (élidé), date. Toute la ligne est cliquable et
+surlignée au survol ; la ligne sélectionnée reste en surbrillance.
+
+GraphPanel = en-tête de colonnes fixe + GraphView (QGraphicsView).
 """
 from __future__ import annotations
 
@@ -24,23 +25,80 @@ from PySide6.QtWidgets import (
     QGraphicsEllipseItem,
     QGraphicsLineItem,
     QGraphicsPathItem,
+    QGraphicsRectItem,
     QGraphicsSimpleTextItem,
+    QHBoxLayout,
+    QLabel,
+    QVBoxLayout,
+    QWidget,
 )
 
 from gitkrakit.core import GraphLayout, GraphNode
 from gitkrakit import theme
 
-ROW_HEIGHT = 34
-LANE_WIDTH = 22
-NODE_RADIUS = 6
-LEFT_MARGIN = 24
-CHIP_PADDING = 7   # marge horizontale interne des pastilles de refs
-PART_SPACING = 10  # espace entre pastilles / sha / message
+ROW_HEIGHT = 28
+LANE_WIDTH = 16
+NODE_RADIUS = 5
+MERGE_NODE_RADIUS = 3.5
+REF_COL_WIDTH = 160   # colonne "branche / tag"
+MSG_COL_WIDTH = 480   # colonne message (élidé au-delà)
+DATE_COL_WIDTH = 150
+CHIP_PADDING = 7
+MAX_VISIBLE_REFS = 2  # au-delà : pastille "+N"
+
+
+class CommitRowItem(QGraphicsRectItem):
+    """Fond pleine largeur d'une ligne : teinte lane, survol, sélection."""
+
+    def __init__(self, node: GraphNode, view: "GraphView", width: float):
+        super().__init__(0, node.row * ROW_HEIGHT, width, ROW_HEIGHT)
+        self.node = node
+        self._view = view
+        self._hovered = False
+
+        tint = QColor(node.color)
+        tint.setAlpha(14)
+        self._base_brush = QBrush(tint)
+
+        hover = QColor(theme.SURFACE)
+        hover.setAlpha(150)
+        self._hover_brush = QBrush(hover)
+
+        selected = QColor(theme.ACCENT_DIM)
+        selected.setAlpha(110)
+        self._selected_brush = QBrush(selected)
+
+        self.setPen(QPen(Qt.NoPen))
+        self.setZValue(0)
+        self.setAcceptHoverEvents(True)
+        self.update_state()
+
+    def update_state(self) -> None:
+        if self._view.selected_sha == self.node.commit.sha:
+            self.setBrush(self._selected_brush)
+        elif self._hovered:
+            self.setBrush(self._hover_brush)
+        else:
+            self.setBrush(self._base_brush)
+
+    def mousePressEvent(self, event):
+        self._view.select_commit(self.node.commit.sha)
+        super().mousePressEvent(event)
+
+    def hoverEnterEvent(self, event):
+        self._hovered = True
+        self.update_state()
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        self._hovered = False
+        self.update_state()
+        super().hoverLeaveEvent(event)
 
 
 class CommitNodeItem(QGraphicsEllipseItem):
     def __init__(self, node: GraphNode, view: "GraphView"):
-        r = NODE_RADIUS
+        r = MERGE_NODE_RADIUS if len(node.commit.parents) > 1 else NODE_RADIUS
         super().__init__(-r, -r, 2 * r, 2 * r)
         self.node = node
         self._view = view
@@ -51,7 +109,7 @@ class CommitNodeItem(QGraphicsEllipseItem):
         self.setCursor(Qt.PointingHandCursor)
 
     def mousePressEvent(self, event):
-        self._view.commit_selected.emit(self.node.commit.sha)
+        self._view.select_commit(self.node.commit.sha)
         super().mousePressEvent(event)
 
     def hoverEnterEvent(self, event):
@@ -75,85 +133,115 @@ class GraphView(QGraphicsView):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.setBackgroundBrush(QBrush(QColor(theme.BACKGROUND)))
-        self.layout: GraphLayout | None = None
+
+        self._graph_layout: GraphLayout | None = None
+        self._rows: dict[str, CommitRowItem] = {}
+        self.selected_sha: str | None = None
+        self.graph_col_width = 120  # exposé pour aligner l'en-tête de colonnes
 
         self._ui_font = QFont("Segoe UI", 9)
-        self._mono_font = QFont("Consolas", 9)
         self._chip_font = QFont("Segoe UI", 8)
 
     def set_commits(self, commits) -> None:
-        self.layout = GraphLayout(commits)
+        self._graph_layout = GraphLayout(commits)
         self._redraw()
 
+    def select_commit(self, sha: str) -> None:
+        previous = self._rows.get(self.selected_sha)
+        self.selected_sha = sha
+        if previous is not None:
+            previous.update_state()
+        current = self._rows.get(sha)
+        if current is not None:
+            current.update_state()
+        self.commit_selected.emit(sha)
+
+    # ------------------------------------------------------------------
     def _redraw(self) -> None:
         self._scene.clear()
-        if not self.layout:
+        self._rows.clear()
+        if not self._graph_layout:
             return
 
-        text_x = LEFT_MARGIN + (self.layout.lane_count + 1) * LANE_WIDTH
-        max_x = text_x
+        layout = self._graph_layout
+        graph_x = REF_COL_WIDTH + 12
+        self.graph_col_width = (layout.lane_count + 1) * LANE_WIDTH + 12
+        msg_x = graph_x + self.graph_col_width
+        date_x = msg_x + MSG_COL_WIDTH + 12
+        total_width = date_x + DATE_COL_WIDTH
 
-        # 1. lignes commit -> parents (sous les noeuds)
-        for node in self.layout.nodes:
-            x0 = LEFT_MARGIN + node.lane * LANE_WIDTH
+        # 0. fonds de ligne (cliquables, survol/sélection)
+        for node in layout.nodes:
+            row = CommitRowItem(node, self, total_width)
+            self._scene.addItem(row)
+            self._rows[node.commit.sha] = row
+
+        # 1. lignes commit -> parents
+        for node in layout.nodes:
+            x0 = graph_x + node.lane * LANE_WIDTH
             y0 = node.row * ROW_HEIGHT + ROW_HEIGHT / 2
             pen = QPen(QColor(node.color), 2)
             pen.setCapStyle(Qt.RoundCap)
             for parent_lane, parent_row in node.parent_lanes:
-                x1 = LEFT_MARGIN + parent_lane * LANE_WIDTH
+                x1 = graph_x + parent_lane * LANE_WIDTH
                 y1 = parent_row * ROW_HEIGHT + ROW_HEIGHT / 2
                 line = QGraphicsLineItem(x0, y0, x1, y1)
                 line.setPen(pen)
                 line.setZValue(1)
                 self._scene.addItem(line)
 
-        # 2. noeuds + texte de la ligne
-        for node in self.layout.nodes:
-            x = LEFT_MARGIN + node.lane * LANE_WIDTH
+        # 2. noeuds + colonnes texte
+        metrics = QFontMetricsF(self._ui_font)
+        for node in layout.nodes:
             y_center = node.row * ROW_HEIGHT + ROW_HEIGHT / 2
 
             item = CommitNodeItem(node, self)
-            item.setPos(x, y_center)
+            item.setPos(graph_x + node.lane * LANE_WIDTH, y_center)
             self._scene.addItem(item)
 
-            end_x = self._draw_row_text(node, text_x, y_center)
-            max_x = max(max_x, end_x)
+            self._draw_refs(node, y_center)
 
-        total_height = len(self.layout.nodes) * ROW_HEIGHT + ROW_HEIGHT
-        self._scene.setSceneRect(QRectF(0, 0, max_x + 40, total_height))
+            is_merge = len(node.commit.parents) > 1
+            message = metrics.elidedText(node.commit.message, Qt.ElideRight, MSG_COL_WIDTH)
+            self._draw_text(
+                message,
+                self._ui_font,
+                theme.TEXT_MUTED if is_merge else theme.TEXT,
+                msg_x,
+                y_center,
+            )
 
-    def _draw_row_text(self, node: GraphNode, x: float, y_center: float) -> float:
-        """Dessine pastilles de refs, sha, message et auteur/date.
-        Retourne la position x atteinte (pour dimensionner la scène)."""
-        commit = node.commit
+            date_text = f"{node.commit.date:%d/%m/%Y @ %H:%M}"
+            self._draw_text(date_text, self._ui_font, theme.TEXT_MUTED, date_x, y_center)
 
-        for ref in commit.refs:
-            x = self._draw_ref_chip(ref, node.color, x, y_center) + PART_SPACING - 4
+        total_height = len(layout.nodes) * ROW_HEIGHT + ROW_HEIGHT / 2
+        self._scene.setSceneRect(QRectF(0, 0, total_width, total_height))
 
-        x = self._draw_text(commit.short_sha, self._mono_font, theme.TEXT_MUTED, x, y_center)
-        x += PART_SPACING
-        x = self._draw_text(commit.message, self._ui_font, theme.TEXT, x, y_center)
-        x += PART_SPACING
-        meta = f"— {commit.author}, {commit.date:%Y-%m-%d %H:%M}"
-        x = self._draw_text(meta, self._ui_font, theme.TEXT_MUTED, x, y_center)
-        return x
+    def _draw_refs(self, node: GraphNode, y_center: float) -> None:
+        """Pastilles branche/tag dans la colonne de gauche ; au-delà de
+        MAX_VISIBLE_REFS, une pastille "+N" résume le reste."""
+        refs = node.commit.refs
+        if not refs:
+            return
+        visible = refs[:MAX_VISIBLE_REFS]
+        overflow = len(refs) - len(visible)
 
-    def _draw_text(self, text: str, font: QFont, color: str, x: float, y_center: float) -> float:
-        item = QGraphicsSimpleTextItem(text)
-        item.setFont(font)
-        item.setBrush(QBrush(QColor(color)))
-        item.setPos(x, y_center - QFontMetricsF(font).height() / 2)
-        item.setZValue(5)
-        self._scene.addItem(item)
-        return x + QFontMetricsF(font).horizontalAdvance(text)
+        x = 6.0
+        for ref in visible:
+            x = self._draw_chip(ref, node.color, x, y_center, max_width=REF_COL_WIDTH - 40) + 4
+        if overflow > 0:
+            self._draw_chip(f"+{overflow}", node.color, x, y_center, max_width=40)
 
-    def _draw_ref_chip(self, ref: str, color: str, x: float, y_center: float) -> float:
+    def _draw_chip(
+        self, text: str, color: str, x: float, y_center: float, max_width: float
+    ) -> float:
         metrics = QFontMetricsF(self._chip_font)
-        width = metrics.horizontalAdvance(ref) + 2 * CHIP_PADDING
+        label_text = metrics.elidedText(text, Qt.ElideRight, max_width - 2 * CHIP_PADDING)
+        width = metrics.horizontalAdvance(label_text) + 2 * CHIP_PADDING
         height = metrics.height() + 4
 
         path = QPainterPath()
-        path.addRoundedRect(QRectF(x, y_center - height / 2, width, height), height / 2, height / 2)
+        path.addRoundedRect(QRectF(x, y_center - height / 2, width, height), 4, 4)
         chip = QGraphicsPathItem(path)
         background = QColor(color)
         background.setAlpha(38)
@@ -162,10 +250,68 @@ class GraphView(QGraphicsView):
         chip.setZValue(4)
         self._scene.addItem(chip)
 
-        label = QGraphicsSimpleTextItem(ref)
+        label = QGraphicsSimpleTextItem(label_text)
         label.setFont(self._chip_font)
         label.setBrush(QBrush(QColor(color)))
         label.setPos(x + CHIP_PADDING, y_center - metrics.height() / 2)
         label.setZValue(5)
         self._scene.addItem(label)
         return x + width
+
+    def _draw_text(self, text: str, font: QFont, color: str, x: float, y_center: float) -> None:
+        item = QGraphicsSimpleTextItem(text)
+        item.setFont(font)
+        item.setBrush(QBrush(QColor(color)))
+        item.setPos(x, y_center - QFontMetricsF(font).height() / 2)
+        item.setZValue(5)
+        self._scene.addItem(item)
+
+
+class GraphPanel(QWidget):
+    """En-tête de colonnes fixe + vue du graphe."""
+
+    commit_selected = Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        header = QWidget()
+        header.setStyleSheet(
+            f"background-color: {theme.PANEL_BG}; border-bottom: 1px solid {theme.BORDER};"
+        )
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(6, 4, 6, 4)
+
+        def col_label(text: str) -> QLabel:
+            label = QLabel(text.upper())
+            label.setStyleSheet(
+                f"color: {theme.TEXT_MUTED}; font-size: 8pt; font-weight: bold;"
+                "background: transparent; border: none;"
+            )
+            return label
+
+        self._ref_header = col_label("Branche / Tag")
+        self._ref_header.setFixedWidth(REF_COL_WIDTH)
+        header_layout.addWidget(self._ref_header)
+
+        self._graph_header = col_label("Graphe")
+        self._graph_header.setFixedWidth(120)
+        header_layout.addWidget(self._graph_header)
+
+        header_layout.addWidget(col_label("Message de commit"), stretch=1)
+        date_header = col_label("Date / Heure")
+        date_header.setFixedWidth(DATE_COL_WIDTH)
+        header_layout.addWidget(date_header)
+
+        layout.addWidget(header)
+
+        self.view = GraphView()
+        self.view.commit_selected.connect(self.commit_selected)
+        layout.addWidget(self.view)
+
+    def set_commits(self, commits) -> None:
+        self.view.set_commits(commits)
+        self._graph_header.setFixedWidth(self.view.graph_col_width)

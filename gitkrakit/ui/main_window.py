@@ -1,9 +1,9 @@
 """
 main_window.py
 Fenêtre principale de GitKrakit : orchestration entre le backend Git et
-les panneaux (espaces de travail, branches, graphe, staging, détails,
-terminal). Les panneaux sont des vues "muettes" qui émettent des signaux ;
-toute la logique Git et la gestion d'erreurs sont centralisées ici.
+les panneaux (barre latérale, graphe, staging, détails, terminal). Les
+panneaux sont des vues "muettes" qui émettent des signaux ; toute la
+logique Git et la gestion d'erreurs sont centralisées ici.
 """
 from __future__ import annotations
 
@@ -19,14 +19,13 @@ from PySide6.QtWidgets import (
     QToolBar,
 )
 
-from gitkrakit.core import GitBackend, GitBackendError
-from gitkrakit.ui.graph_view import GraphView
+from gitkrakit.core import CommitInfo, GitBackend, GitBackendError
+from gitkrakit.ui.graph_view import GraphPanel
 from gitkrakit.ui.panels import (
-    BranchesPanel,
     DetailsPanel,
+    SidebarPanel,
     StagingPanel,
     TerminalDock,
-    WorkspacePanel,
 )
 from gitkrakit.workspace import WorkspaceManager
 
@@ -39,12 +38,13 @@ class MainWindow(QMainWindow):
 
         self.backend = GitBackend()
         self.workspace_manager = WorkspaceManager()
+        self._commits_by_sha: dict[str, CommitInfo] = {}
 
         self._build_toolbar()
         self._build_central_widget()
         self._build_terminal_dock()
 
-        self.statusBar().showMessage("Ouvre un dépôt pour commencer (Fichier > Ouvrir un dépôt)")
+        self.statusBar().showMessage("Ouvre un dépôt pour commencer (Ouvrir un dépôt)")
 
     # ------------------------------------------------------------------
     # Construction UI
@@ -60,15 +60,15 @@ class MainWindow(QMainWindow):
         toolbar.addSeparator()
 
         fetch_action = QAction("Fetch", self)
-        fetch_action.triggered.connect(lambda: self._run_remote_op(self.backend.fetch))
+        fetch_action.triggered.connect(lambda: self._run_backend_op(self.backend.fetch))
         toolbar.addAction(fetch_action)
 
         pull_action = QAction("Pull", self)
-        pull_action.triggered.connect(lambda: self._run_remote_op(self.backend.pull))
+        pull_action.triggered.connect(lambda: self._run_backend_op(self.backend.pull))
         toolbar.addAction(pull_action)
 
         push_action = QAction("Push", self)
-        push_action.triggered.connect(lambda: self._run_remote_op(self.backend.push))
+        push_action.triggered.connect(lambda: self._run_backend_op(self.backend.push))
         toolbar.addAction(push_action)
 
         toolbar.addSeparator()
@@ -77,6 +77,16 @@ class MainWindow(QMainWindow):
         branch_action.triggered.connect(self.create_branch_dialog)
         toolbar.addAction(branch_action)
 
+        stash_action = QAction("Stash", self)
+        stash_action.triggered.connect(lambda: self._run_backend_op(self.backend.stash))
+        toolbar.addAction(stash_action)
+
+        pop_action = QAction("Pop", self)
+        pop_action.triggered.connect(lambda: self._run_backend_op(self.backend.stash_pop))
+        toolbar.addAction(pop_action)
+
+        toolbar.addSeparator()
+
         refresh_action = QAction("Rafraîchir", self)
         refresh_action.triggered.connect(self.refresh_all)
         toolbar.addAction(refresh_action)
@@ -84,23 +94,17 @@ class MainWindow(QMainWindow):
     def _build_central_widget(self) -> None:
         splitter = QSplitter(Qt.Horizontal)
 
-        # --- panneau gauche : espaces de travail + branches/tags ---
-        left_tabs = QTabWidget()
-
-        self.workspace_panel = WorkspacePanel(self.workspace_manager)
-        self.workspace_panel.open_repo_requested.connect(self.open_repo)
-        left_tabs.addTab(self.workspace_panel, "Espaces")
-
-        self.branches_panel = BranchesPanel()
-        self.branches_panel.checkout_requested.connect(self._checkout_branch)
-        left_tabs.addTab(self.branches_panel, "Branches")
-
-        splitter.addWidget(left_tabs)
+        # --- gauche : barre latérale unifiée ---
+        self.sidebar = SidebarPanel(self.workspace_manager)
+        self.sidebar.open_repo_requested.connect(self.open_repo)
+        self.sidebar.checkout_requested.connect(self._checkout_branch)
+        self.sidebar.branch_delete_requested.connect(self._delete_branch)
+        splitter.addWidget(self.sidebar)
 
         # --- centre : graphe de commits ---
-        self.graph_view = GraphView()
-        self.graph_view.commit_selected.connect(self.show_commit_details)
-        splitter.addWidget(self.graph_view)
+        self.graph_panel = GraphPanel()
+        self.graph_panel.commit_selected.connect(self.show_commit_details)
+        splitter.addWidget(self.graph_panel)
 
         # --- droite : staging + détails ---
         right_panel = QTabWidget()
@@ -113,9 +117,10 @@ class MainWindow(QMainWindow):
 
         self.details_panel = DetailsPanel()
         right_panel.addTab(self.details_panel, "Détails du commit")
+        self._right_panel = right_panel
 
         splitter.addWidget(right_panel)
-        splitter.setSizes([220, 700, 360])
+        splitter.setSizes([230, 720, 330])
 
         self.setCentralWidget(splitter)
 
@@ -133,14 +138,13 @@ class MainWindow(QMainWindow):
             self.open_repo(path)
 
     def open_repo(self, path: str) -> None:
-        """Point d'entrée unique pour ouvrir un dépôt (dialogue, workspace, CLI)."""
+        """Point d'entrée unique pour ouvrir un dépôt (dialogue, sidebar, CLI)."""
         try:
             self.backend.open(path)
         except GitBackendError as exc:
             QMessageBox.critical(self, "Erreur", str(exc))
             return
         self.workspace_manager.touch_recent(self.backend.working_dir or path)
-        self.workspace_panel.refresh()
         self.setWindowTitle(f"GitKrakit — {path}")
         self.refresh_all()
 
@@ -151,13 +155,15 @@ class MainWindow(QMainWindow):
         if not self.backend.is_open:
             return
         try:
-            self.branches_panel.update_data(
+            self.sidebar.update_refs(
                 local=self.backend.local_branches(),
                 remote=self.backend.remote_branches(),
                 tags=self.backend.tags(),
                 current_branch=self.backend.current_branch,
             )
-            self.graph_view.set_commits(self.backend.commit_log())
+            commits = self.backend.commit_log()
+            self._commits_by_sha = {c.sha: c for c in commits}
+            self.graph_panel.set_commits(commits)
             self._refresh_status()
         except GitBackendError as exc:
             QMessageBox.critical(self, "Erreur", str(exc))
@@ -173,6 +179,14 @@ class MainWindow(QMainWindow):
     def _checkout_branch(self, name: str) -> None:
         try:
             self.backend.checkout(name)
+        except GitBackendError as exc:
+            QMessageBox.critical(self, "Erreur", str(exc))
+            return
+        self.refresh_all()
+
+    def _delete_branch(self, name: str) -> None:
+        try:
+            self.backend.delete_branch(name)
         except GitBackendError as exc:
             QMessageBox.critical(self, "Erreur", str(exc))
             return
@@ -214,7 +228,9 @@ class MainWindow(QMainWindow):
         self.staging_panel.clear_message()
         self.refresh_all()
 
-    def _run_remote_op(self, fn) -> None:
+    def _run_backend_op(self, fn) -> None:
+        """Opération backend qui retourne un message de statut (fetch, pull,
+        push, stash…) : affiche le résultat dans la barre de statut."""
         if not self.backend.is_open:
             return
         try:
@@ -226,10 +242,15 @@ class MainWindow(QMainWindow):
         self.refresh_all()
 
     def show_commit_details(self, sha: str) -> None:
-        commits = {c.sha: c for c in self.backend.commit_log()}
-        commit = commits.get(sha)
-        if commit is not None:
-            self.details_panel.show_commit(commit)
+        commit = self._commits_by_sha.get(sha)
+        if commit is None:
+            return
+        try:
+            files = self.backend.commit_files(sha)
+        except GitBackendError:
+            files = []
+        self.details_panel.show_commit(commit, files)
+        self._right_panel.setCurrentWidget(self.details_panel)
 
     def _run_terminal_command(self, args: list[str]) -> None:
         if not self.backend.is_open:
