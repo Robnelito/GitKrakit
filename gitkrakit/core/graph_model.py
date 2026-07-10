@@ -20,19 +20,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from git_backend import CommitInfo
-
-# Palette de couleurs cycliques pour les lanes (façon GitKraken)
-LANE_COLORS = [
-    "#3fb950",  # vert
-    "#58a6ff",  # bleu
-    "#f0883e",  # orange
-    "#db61a2",  # rose
-    "#a371f7",  # violet
-    "#e3b341",  # jaune
-    "#39c5cf",  # cyan
-    "#f85149",  # rouge
-]
+from gitkrakit.core.git_backend import CommitInfo
+from gitkrakit.theme import LANE_COLORS
 
 
 @dataclass

@@ -18,13 +18,13 @@ from PySide6.QtWidgets import (
     QGraphicsTextItem,
 )
 
-from graph_model import GraphLayout, GraphNode
+from gitkrakit.core import GraphLayout, GraphNode
+from gitkrakit import theme
 
 ROW_HEIGHT = 34
 LANE_WIDTH = 22
 NODE_RADIUS = 5
 LEFT_MARGIN = 20
-TEXT_OFFSET = 14
 
 
 class CommitNodeItem(QGraphicsEllipseItem):
@@ -34,7 +34,7 @@ class CommitNodeItem(QGraphicsEllipseItem):
         self.node = node
         self._view = view
         self.setBrush(QBrush(QColor(node.color)))
-        self.setPen(QPen(QColor("#0d1117"), 1))
+        self.setPen(QPen(QColor(theme.BACKGROUND), 1))
         self.setZValue(10)
         self.setAcceptHoverEvents(True)
         self.setCursor(Qt.PointingHandCursor)
@@ -44,11 +44,11 @@ class CommitNodeItem(QGraphicsEllipseItem):
         super().mousePressEvent(event)
 
     def hoverEnterEvent(self, event):
-        self.setPen(QPen(QColor("#ffffff"), 2))
+        self.setPen(QPen(QColor(theme.HIGHLIGHT), 2))
         super().hoverEnterEvent(event)
 
     def hoverLeaveEvent(self, event):
-        self.setPen(QPen(QColor("#0d1117"), 1))
+        self.setPen(QPen(QColor(theme.BACKGROUND), 1))
         super().hoverLeaveEvent(event)
 
 
@@ -62,7 +62,7 @@ class GraphView(QGraphicsView):
         self.setRenderHint(QPainter.Antialiasing)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.setBackgroundBrush(QBrush(QColor("#0d1117")))
+        self.setBackgroundBrush(QBrush(QColor(theme.BACKGROUND)))
         self.layout: GraphLayout | None = None
 
     def set_commits(self, commits) -> None:
@@ -105,7 +105,7 @@ class GraphView(QGraphicsView):
                 f"   — {node.commit.author}, {node.commit.date:%Y-%m-%d %H:%M}"
             )
             text = QGraphicsTextItem(label)
-            text.setDefaultTextColor(QColor("#c9d1d9"))
+            text.setDefaultTextColor(QColor(theme.TEXT))
             text.setFont(font)
             text.setPos(text_x, node.row * ROW_HEIGHT)
             self._scene.addItem(text)
