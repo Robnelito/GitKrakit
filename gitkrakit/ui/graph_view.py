@@ -5,7 +5,12 @@ ligne pleine largeur découpée en colonnes — pastilles branche/tag,
 lanes du graphe, message (élidé), date. Toute la ligne est cliquable et
 surlignée au survol ; la ligne sélectionnée reste en surbrillance.
 
-GraphPanel = en-tête de colonnes fixe + GraphView (QGraphicsView).
+Les colonnes Branche/Tag, Graphe et Message sont redimensionnables : on
+fait glisser les séparateurs de l'en-tête (comme les colonnes d'un
+tableau). GraphView lit ces largeurs sur GraphPanel pour dessiner les
+lignes exactement sous les bonnes colonnes.
+
+GraphPanel = en-tête de colonnes redimensionnable + GraphView (QGraphicsView).
 """
 from __future__ import annotations
 
@@ -29,6 +34,7 @@ from PySide6.QtWidgets import (
     QGraphicsSimpleTextItem,
     QHBoxLayout,
     QLabel,
+    QSplitter,
     QVBoxLayout,
     QWidget,
 )
@@ -40,9 +46,19 @@ ROW_HEIGHT = 28
 LANE_WIDTH = 16
 NODE_RADIUS = 5
 MERGE_NODE_RADIUS = 3.5
-REF_COL_WIDTH = 160   # colonne "branche / tag"
-MSG_COL_WIDTH = 480   # colonne message (élidé au-delà)
-DATE_COL_WIDTH = 150
+
+# largeurs de colonnes par défaut (l'utilisateur peut les redimensionner
+# via les poignées de l'en-tête ; voir GraphPanel)
+DEFAULT_REF_COL_WIDTH = 160
+DEFAULT_GRAPH_COL_WIDTH = 120
+DEFAULT_MSG_COL_WIDTH = 480
+DATE_COL_WIDTH = 150  # colonne finale, non redimensionnable (queue de ligne)
+
+MIN_REF_COL_WIDTH = 70
+MIN_GRAPH_COL_WIDTH = 50
+MIN_MSG_COL_WIDTH = 150
+
+HANDLE_WIDTH = 1  # largeur des poignées de redimensionnement de l'en-tête
 CHIP_PADDING = 7
 MAX_VISIBLE_REFS = 2  # au-delà : pastille "+N"
 
@@ -140,16 +156,41 @@ class GraphView(QGraphicsView):
         self._rows: dict[str, CommitRowItem] = {}
         self._content_width = 0.0
         self.selected_sha: str | None = None
-        self.graph_col_width = 120  # exposé pour aligner l'en-tête de colonnes
+
+        # largeurs de colonnes ; modifiables via set_column_widths()
+        self.col_ref = DEFAULT_REF_COL_WIDTH
+        self.col_graph = DEFAULT_GRAPH_COL_WIDTH
+        self.col_msg = DEFAULT_MSG_COL_WIDTH
+        self.graph_auto_size = True  # False dès que l'utilisateur redimensionne
 
         self._ui_font = QFont("Segoe UI", 9)
         self._chip_font = QFont("Segoe UI", 8)
+
+    def set_column_widths(
+        self, ref: float | None = None, graph: float | None = None, msg: float | None = None
+    ) -> None:
+        """Applique de nouvelles largeurs de colonnes (glissées depuis
+        l'en-tête) et redessine. `graph` marque la colonne graphe comme
+        fixée par l'utilisateur (elle n'est plus recalculée automatiquement
+        selon le nombre de lanes)."""
+        if ref is not None:
+            self.col_ref = ref
+        if graph is not None:
+            self.col_graph = graph
+            self.graph_auto_size = False
+        if msg is not None:
+            self.col_msg = msg
+        self._redraw()
 
     def set_commits(self, commits) -> None:
         # préserver la position de défilement (rafraîchissement auto)
         v_scroll = self.verticalScrollBar().value()
         h_scroll = self.horizontalScrollBar().value()
         self._graph_layout = GraphLayout(commits)
+        if self.graph_auto_size:
+            self.col_graph = max(
+                MIN_GRAPH_COL_WIDTH, (self._graph_layout.lane_count + 1) * LANE_WIDTH + 12
+            )
         self._redraw()
         self.verticalScrollBar().setValue(v_scroll)
         self.horizontalScrollBar().setValue(h_scroll)
@@ -172,10 +213,11 @@ class GraphView(QGraphicsView):
             return
 
         layout = self._graph_layout
-        graph_x = REF_COL_WIDTH + 12
-        self.graph_col_width = (layout.lane_count + 1) * LANE_WIDTH + 12
-        msg_x = graph_x + self.graph_col_width
-        date_x = msg_x + MSG_COL_WIDTH + 12
+        # décalages de HANDLE_WIDTH pour rester aligné pixel pour pixel
+        # avec les poignées de redimensionnement de l'en-tête (GraphPanel)
+        graph_x = self.col_ref + HANDLE_WIDTH
+        msg_x = graph_x + self.col_graph + HANDLE_WIDTH
+        date_x = msg_x + self.col_msg
         total_width = date_x + DATE_COL_WIDTH
 
         # 0. fonds de ligne (cliquables, survol/sélection)
@@ -210,7 +252,7 @@ class GraphView(QGraphicsView):
             self._draw_refs(node, y_center)
 
             is_merge = len(node.commit.parents) > 1
-            message = metrics.elidedText(node.commit.message, Qt.ElideRight, MSG_COL_WIDTH)
+            message = metrics.elidedText(node.commit.message, Qt.ElideRight, self.col_msg - 8)
             self._draw_text(
                 message,
                 self._ui_font,
@@ -255,8 +297,9 @@ class GraphView(QGraphicsView):
         overflow = len(refs) - len(visible)
 
         x = 6.0
+        available = self.col_ref - 46  # marge pour la pastille "+N" éventuelle
         for ref in visible:
-            x = self._draw_chip(ref, node.color, x, y_center, max_width=REF_COL_WIDTH - 40) + 4
+            x = self._draw_chip(ref, node.color, x, y_center, max_width=max(30, available)) + 4
         if overflow > 0:
             self._draw_chip(f"+{overflow}", node.color, x, y_center, max_width=40)
 
@@ -295,8 +338,24 @@ class GraphView(QGraphicsView):
         self._scene.addItem(item)
 
 
+def _col_label(text: str) -> QLabel:
+    label = QLabel(text.upper())
+    label.setStyleSheet(
+        f"color: {theme.TEXT_MUTED}; font-size: 8pt; font-weight: bold;"
+        "background: transparent; border: none; padding-left: 6px;"
+    )
+    return label
+
+
 class GraphPanel(QWidget):
-    """En-tête de colonnes fixe + vue du graphe."""
+    """En-tête de colonnes redimensionnable + vue du graphe.
+
+    Les 3 premières colonnes (Branche/Tag, Graphe, Message) vivent dans un
+    QSplitter : faire glisser une poignée redimensionne la colonne et
+    répercute la nouvelle largeur sur GraphView pour que le dessin reste
+    aligné. La colonne Date suit en simple label (queue de ligne, non
+    redimensionnable).
+    """
 
     commit_selected = Signal(str)
 
@@ -310,34 +369,39 @@ class GraphPanel(QWidget):
         header.setStyleSheet(
             f"background-color: {theme.PANEL_BG}; border-bottom: 1px solid {theme.BORDER};"
         )
-        # colonnes alignées sur les positions x de la scène (spacing 0,
-        # largeurs identiques à celles utilisées dans GraphView._redraw)
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(0, 4, 0, 4)
         header_layout.setSpacing(0)
 
-        def col_label(text: str) -> QLabel:
-            label = QLabel(text.upper())
-            label.setStyleSheet(
-                f"color: {theme.TEXT_MUTED}; font-size: 8pt; font-weight: bold;"
-                "background: transparent; border: none; padding-left: 6px;"
-            )
-            return label
+        self.header_splitter = QSplitter(Qt.Horizontal)
+        self.header_splitter.setHandleWidth(HANDLE_WIDTH)
+        self.header_splitter.setChildrenCollapsible(False)
+        self.header_splitter.setStyleSheet(
+            f"QSplitter::handle {{ background-color: {theme.BORDER}; }}"
+            f"QSplitter::handle:hover {{ background-color: {theme.ACCENT}; }}"
+        )
 
-        self._ref_header = col_label("Branche / Tag")
-        self._ref_header.setFixedWidth(REF_COL_WIDTH + 12)
-        header_layout.addWidget(self._ref_header)
+        self._ref_header = _col_label("Branche / Tag")
+        self._ref_header.setMinimumWidth(MIN_REF_COL_WIDTH)
+        self.header_splitter.addWidget(self._ref_header)
 
-        self._graph_header = col_label("Graphe")
-        self._graph_header.setFixedWidth(120)
-        header_layout.addWidget(self._graph_header)
+        self._graph_header = _col_label("Graphe")
+        self._graph_header.setMinimumWidth(MIN_GRAPH_COL_WIDTH)
+        self.header_splitter.addWidget(self._graph_header)
 
-        message_header = col_label("Message de commit")
-        message_header.setFixedWidth(MSG_COL_WIDTH + 12)
-        header_layout.addWidget(message_header)
+        self._msg_header = _col_label("Message de commit")
+        self._msg_header.setMinimumWidth(MIN_MSG_COL_WIDTH)
+        self.header_splitter.addWidget(self._msg_header)
 
-        header_layout.addWidget(col_label("Date / Heure"))
-        header_layout.addStretch(1)
+        self.header_splitter.setSizes(
+            [DEFAULT_REF_COL_WIDTH, DEFAULT_GRAPH_COL_WIDTH, DEFAULT_MSG_COL_WIDTH]
+        )
+        self.header_splitter.splitterMoved.connect(self._on_splitter_moved)
+        header_layout.addWidget(self.header_splitter, stretch=1)
+
+        date_header = _col_label("Date / Heure")
+        date_header.setFixedWidth(DATE_COL_WIDTH)
+        header_layout.addWidget(date_header)
 
         layout.addWidget(header)
 
@@ -347,4 +411,13 @@ class GraphPanel(QWidget):
 
     def set_commits(self, commits) -> None:
         self.view.set_commits(commits)
-        self._graph_header.setFixedWidth(self.view.graph_col_width)
+        # si la colonne graphe n'a pas été redimensionnée à la main,
+        # répercute sa largeur auto-calculée (nb de lanes) sur l'en-tête
+        if self.view.graph_auto_size:
+            sizes = self.header_splitter.sizes()
+            sizes[1] = int(self.view.col_graph)
+            self.header_splitter.setSizes(sizes)
+
+    def _on_splitter_moved(self, _pos: int, _index: int) -> None:
+        ref, graph, msg = self.header_splitter.sizes()
+        self.view.set_column_widths(ref=ref, graph=graph, msg=msg)

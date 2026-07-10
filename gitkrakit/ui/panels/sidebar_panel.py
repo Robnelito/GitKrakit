@@ -1,23 +1,35 @@
 """
 sidebar_panel.py
-Barre latérale unique façon GitKraken : sections repliables (Espaces de
-travail, Récents, Local, Remote, Tags) avec compteurs, champ de filtre en
-haut, menu contextuel pour gérer espaces/dépôts/branches. Vue "muette" :
-elle émet des signaux, la fenêtre principale exécute les actions Git.
+Barre latérale scindée en deux zones bien distinctes, façon GitKraken :
+
+  - DÉPÔTS      : gestion de répertoires sur disque (espaces de travail,
+                  dépôts récents) — n'a aucune notion d'objet Git.
+  - OBJETS GIT  : références du dépôt actuellement ouvert (Git Flow,
+                  branches locales/distantes, tags) — n'a aucune notion
+                  de système de fichiers.
+
+Chaque zone est un QTreeWidget séparé avec son propre bandeau de titre ;
+un QSplitter vertical permet de redimensionner l'une par rapport à
+l'autre. Vue "muette" : elle émet des signaux, la fenêtre principale
+exécute les actions Git.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFont
 from PySide6.QtWidgets import (
     QFileDialog,
+    QHBoxLayout,
     QHeaderView,
     QInputDialog,
+    QLabel,
     QLineEdit,
     QMenu,
     QMessageBox,
+    QSplitter,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -25,6 +37,7 @@ from PySide6.QtWidgets import (
 )
 
 from gitkrakit import theme
+from gitkrakit.core import GitFlowStatus
 from gitkrakit.workspace import WorkspaceError, WorkspaceManager
 
 _KIND_ROLE = Qt.UserRole
@@ -37,12 +50,66 @@ K_LOCAL_BRANCH = "local-branch"
 K_REMOTE_BRANCH = "remote-branch"
 K_TAG = "tag"
 K_SECTION_WORKSPACES = "section-workspaces"
+K_SECTION_GITFLOW = "section-gitflow"
+K_GITFLOW_INIT = "gitflow-init"
+K_GF_FEATURE = "feature"
+K_GF_RELEASE = "release"
+K_GF_HOTFIX = "hotfix"
+
+
+def _same_path(a: str, b: str) -> bool:
+    """Compare deux chemins de dépôt en ignorant séparateurs/casse
+    (Windows n'est pas sensible à la casse, et les chemins stockés en
+    JSON peuvent différer d'un `/` ou `\\` près)."""
+    return os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
+
+
+def _make_tree() -> QTreeWidget:
+    tree = QTreeWidget()
+    tree.setColumnCount(2)
+    tree.setHeaderHidden(True)
+    tree.setRootIsDecorated(True)
+    # colonne 0 (nom) extensible, colonne 1 (compteur) étroite et fixe
+    tree.header().setStretchLastSection(False)
+    tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
+    tree.header().setSectionResizeMode(1, QHeaderView.Fixed)
+    tree.header().resizeSection(1, 52)
+    return tree
+
+
+def _group_header(text: str, accent: str) -> QWidget:
+    """Bandeau de titre d'une zone (DÉPÔTS / OBJETS GIT) : une barre
+    verticale de couleur + le libellé, pour marquer visuellement la
+    frontière entre gestion de répertoires et gestion d'objets Git."""
+    header = QWidget()
+    header.setStyleSheet(f"background-color: {theme.PANEL_BG};")
+    layout = QHBoxLayout(header)
+    layout.setContentsMargins(8, 5, 8, 5)
+    layout.setSpacing(6)
+
+    bar = QLabel()
+    bar.setFixedWidth(3)
+    bar.setStyleSheet(f"background-color: {accent}; border-radius: 1px;")
+    layout.addWidget(bar)
+
+    label = QLabel(text.upper())
+    font = QFont("Segoe UI", 8)
+    font.setBold(True)
+    font.setLetterSpacing(QFont.PercentageSpacing, 105)
+    label.setFont(font)
+    label.setStyleSheet(f"color: {theme.TEXT}; background: transparent;")
+    layout.addWidget(label)
+    layout.addStretch(1)
+    return header
 
 
 class SidebarPanel(QWidget):
     open_repo_requested = Signal(str)
     checkout_requested = Signal(str)
     branch_delete_requested = Signal(str)
+    gitflow_init_requested = Signal()
+    gitflow_start_requested = Signal(str)        # kind: feature | release | hotfix
+    gitflow_finish_requested = Signal(str, str)  # (kind, nom court)
 
     def __init__(self, manager: WorkspaceManager, parent=None):
         super().__init__(parent)
@@ -51,6 +118,10 @@ class SidebarPanel(QWidget):
         self._remote: list[str] = []
         self._tags: list[str] = []
         self._current_branch = ""
+        self._gitflow: GitFlowStatus | None = None
+        self._repo_open = False
+        self._active_repo_path: str | None = None
+        self._ahead_behind: dict[str, tuple[int, int]] = {}
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -58,89 +129,302 @@ class SidebarPanel(QWidget):
 
         self.filter_edit = QLineEdit()
         self.filter_edit.setPlaceholderText("Filtrer…")
+        self.filter_edit.setContentsMargins(0, 0, 0, 0)
         self.filter_edit.textChanged.connect(self._apply_filter)
-        layout.addWidget(self.filter_edit)
+        margin_wrap = QWidget()
+        margin_layout = QVBoxLayout(margin_wrap)
+        margin_layout.setContentsMargins(6, 6, 6, 0)
+        margin_layout.addWidget(self.filter_edit)
+        layout.addWidget(margin_wrap)
 
-        self.tree = QTreeWidget()
-        self.tree.setColumnCount(2)
-        self.tree.setHeaderHidden(True)
-        self.tree.setRootIsDecorated(True)
-        # colonne 0 (nom) extensible, colonne 1 (compteur) étroite et fixe
-        self.tree.header().setStretchLastSection(False)
-        self.tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.tree.header().setSectionResizeMode(1, QHeaderView.Fixed)
-        self.tree.header().resizeSection(1, 36)
-        self.tree.itemDoubleClicked.connect(self._on_double_click)
-        self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.tree.customContextMenuRequested.connect(self._show_context_menu)
-        layout.addWidget(self.tree)
+        # --- zone 1 : gestion de répertoires (espaces de travail, récents) ---
+        repos_widget = QWidget()
+        repos_layout = QVBoxLayout(repos_widget)
+        repos_layout.setContentsMargins(0, 0, 0, 0)
+        repos_layout.setSpacing(0)
+        repos_layout.addWidget(_group_header("Dépôts", theme.ACCENT))
+        self.repos_tree = _make_tree()
+        self.repos_tree.itemDoubleClicked.connect(self._on_double_click)
+        self.repos_tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.repos_tree.customContextMenuRequested.connect(
+            lambda pos: self._show_context_menu(self.repos_tree, pos)
+        )
+        repos_layout.addWidget(self.repos_tree)
+
+        # --- zone 2 : objets Git du dépôt ouvert (gitflow, branches, tags) ---
+        refs_widget = QWidget()
+        refs_layout = QVBoxLayout(refs_widget)
+        refs_layout.setContentsMargins(0, 0, 0, 0)
+        refs_layout.setSpacing(0)
+        refs_layout.addWidget(_group_header("Objets Git", theme.LANE_COLORS[0]))
+        self.refs_tree = _make_tree()
+        self.refs_tree.itemDoubleClicked.connect(self._on_double_click)
+        self.refs_tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.refs_tree.customContextMenuRequested.connect(
+            lambda pos: self._show_context_menu(self.refs_tree, pos)
+        )
+        refs_layout.addWidget(self.refs_tree)
+
+        splitter = QSplitter(Qt.Vertical)
+        splitter.addWidget(repos_widget)
+        splitter.addWidget(refs_widget)
+        splitter.setSizes([180, 420])
+        splitter.setStyleSheet(f"QSplitter::handle {{ background-color: {theme.BORDER}; }}")
+        layout.addWidget(splitter, stretch=1)
 
         self.refresh()
 
     # ------------------------------------------------------------------
     # Données
     # ------------------------------------------------------------------
+    def set_active_repo(self, path: str) -> None:
+        """Marque `path` comme dépôt actif dans la zone DÉPÔTS (espaces de
+        travail + récents)."""
+        self._active_repo_path = path
+        self._refresh_repos_tree()
+        self._apply_filter(self.filter_edit.text())
+
     def update_refs(
         self,
         local: list[str],
         remote: list[str],
         tags: list[str],
         current_branch: str,
+        gitflow: GitFlowStatus | None = None,
+        ahead_behind: dict[str, tuple[int, int]] | None = None,
     ) -> None:
         self._local = local
         self._remote = remote
         self._tags = tags
         self._current_branch = current_branch
+        self._gitflow = gitflow
+        self._ahead_behind = ahead_behind or {}
+        self._repo_open = True
         self.refresh()
 
     def refresh(self) -> None:
-        self.tree.clear()
+        self._refresh_repos_tree()
+        self._refresh_refs_tree()
+        self._apply_filter(self.filter_edit.text())
 
-        ws_section = self._add_section("Espaces de travail", len(self._manager.workspaces))
+    def _refresh_repos_tree(self) -> None:
+        tree = self.repos_tree
+        tree.clear()
+        active_item: QTreeWidgetItem | None = None
+
+        ws_section = self._add_section(
+            tree, "Espaces de travail", len(self._manager.workspaces)
+        )
         ws_section.setData(0, _KIND_ROLE, K_SECTION_WORKSPACES)
         for workspace in self._manager.workspaces:
             ws_item = QTreeWidgetItem([workspace.name, ""])
             ws_item.setData(0, _KIND_ROLE, K_WORKSPACE)
             ws_section.addChild(ws_item)
             for repo_path in workspace.repos:
-                ws_item.addChild(self._repo_item(repo_path, K_REPO))
+                item = self._repo_item(repo_path, K_REPO)
+                ws_item.addChild(item)
+                if self._mark_active_repo(item, repo_path):
+                    active_item = item
             ws_item.setExpanded(True)
 
         if self._manager.recent:
-            recent_section = self._add_section("Récents", len(self._manager.recent))
+            recent_section = self._add_section(tree, "Récents", len(self._manager.recent))
             for repo_path in self._manager.recent:
-                recent_section.addChild(self._repo_item(repo_path, K_RECENT))
+                item = self._repo_item(repo_path, K_RECENT)
+                recent_section.addChild(item)
+                if self._mark_active_repo(item, repo_path):
+                    active_item = item
 
-        local_section = self._add_section("Local", len(self._local))
-        for name in self._local:
-            item = QTreeWidgetItem([name, ""])
+        if active_item is not None:
+            tree.scrollToItem(active_item)
+
+    def _refresh_refs_tree(self) -> None:
+        tree = self.refs_tree
+        tree.clear()
+
+        if not self._repo_open:
+            placeholder = QTreeWidgetItem(["Ouvre un dépôt pour voir ses branches", ""])
+            placeholder.setForeground(0, QBrush(QColor(theme.TEXT_MUTED)))
+            tree.addTopLevelItem(placeholder)
+            return
+
+        self._build_gitflow_section(tree)
+
+        # "origin/HEAD" est un alias symbolique (pas une vraie branche) :
+        # pur bruit dans la liste, on l'exclut.
+        remote_names = [n for n in self._remote if n.rsplit("/", 1)[-1] != "HEAD"]
+
+        local_section = self._add_section(tree, "Local", len(self._local))
+        self._add_branch_tree(local_section, K_LOCAL_BRANCH, self._local, mark_current=True)
+
+        remote_section = self._add_section(tree, "Remote", len(remote_names))
+        self._add_branch_tree(remote_section, K_REMOTE_BRANCH, remote_names, mark_current=False)
+
+        tags_section = self._add_section(tree, "Tags", len(self._tags))
+        self._add_branch_tree(tags_section, K_TAG, self._tags, mark_current=False)
+
+    def _build_gitflow_section(self, tree: QTreeWidget) -> None:
+        status = self._gitflow
+
+        if status is None:
+            section = self._add_section(tree, "Gitflow", 0)
+            section.setData(0, _KIND_ROLE, K_SECTION_GITFLOW)
+            init_item = QTreeWidgetItem(["Initialiser Git Flow…", ""])
+            init_item.setData(0, _KIND_ROLE, K_GITFLOW_INIT)
+            init_item.setForeground(0, QBrush(QColor(theme.ACCENT)))
+            section.addChild(init_item)
+            return
+
+        total = len(status.features) + len(status.releases) + len(status.hotfixes)
+        section = self._add_section(tree, "Gitflow", total)
+        section.setData(0, _KIND_ROLE, K_SECTION_GITFLOW)
+
+        for branch in (status.config.develop, status.config.main):
+            item = QTreeWidgetItem([branch, ""])
             item.setData(0, _KIND_ROLE, K_LOCAL_BRANCH)
-            item.setData(0, _DATA_ROLE, name)
-            if name == self._current_branch:
-                item.setText(0, f"✓ {name}")
-                item.setForeground(0, QBrush(QColor(theme.ACCENT)))
-                font = item.font(0)
-                font.setBold(True)
-                item.setFont(0, font)
-            local_section.addChild(item)
+            item.setData(0, _DATA_ROLE, branch)
+            self._mark_if_current(item, branch)
+            self._set_sync_badge(item, branch)
+            section.addChild(item)
 
-        remote_section = self._add_section("Remote", len(self._remote))
-        for name in self._remote:
-            item = QTreeWidgetItem([name, ""])
-            item.setData(0, _KIND_ROLE, K_REMOTE_BRANCH)
-            item.setData(0, _DATA_ROLE, name)
-            remote_section.addChild(item)
+        for kind, label, names in (
+            (K_GF_FEATURE, "feature", status.features),
+            (K_GF_RELEASE, "release", status.releases),
+            (K_GF_HOTFIX, "hotfix", status.hotfixes),
+        ):
+            folder = QTreeWidgetItem([label, str(len(names)) if names else ""])
+            folder.setForeground(0, QBrush(QColor(theme.TEXT_MUTED)))
+            folder.setForeground(1, QBrush(QColor(theme.TEXT_MUTED)))
+            folder.setTextAlignment(1, Qt.AlignRight | Qt.AlignVCenter)
+            section.addChild(folder)
+            for name in names:
+                child = QTreeWidgetItem([name, ""])
+                child.setData(0, _KIND_ROLE, kind)
+                child.setData(0, _DATA_ROLE, name)
+                full_name = self._gitflow_full_name(kind, name)
+                self._mark_if_current(child, full_name)
+                self._set_sync_badge(child, full_name)
+                folder.addChild(child)
+            folder.setExpanded(True)
 
-        tags_section = self._add_section("Tags", len(self._tags))
-        for name in self._tags:
-            item = QTreeWidgetItem([name, ""])
-            item.setData(0, _KIND_ROLE, K_TAG)
-            item.setData(0, _DATA_ROLE, name)
-            tags_section.addChild(item)
+    def _add_branch_tree(
+        self, parent: QTreeWidgetItem, kind: str, names: list[str], mark_current: bool
+    ) -> None:
+        """Regroupe des noms de branches/tags en dossiers selon les
+        segments séparés par '/' (ex: "origin/feature/x" -> origin >
+        feature > x), au lieu d'une liste plate de chaînes à rallonge."""
+        root: dict = {}
+        for name in names:
+            self._insert_branch_path(root, name.split("/"), name)
+        self._render_branch_tree(parent, root, kind, mark_current)
 
-        self._apply_filter(self.filter_edit.text())
+    @staticmethod
+    def _insert_branch_path(node: dict, parts: list[str], full_name: str) -> None:
+        if len(parts) == 1:
+            node.setdefault("__leaves__", []).append((parts[0], full_name))
+            return
+        child = node.setdefault(parts[0], {})
+        SidebarPanel._insert_branch_path(child, parts[1:], full_name)
 
-    def _add_section(self, title: str, count: int) -> QTreeWidgetItem:
+    def _render_branch_tree(
+        self, parent: QTreeWidgetItem, node: dict, kind: str, mark_current: bool
+    ) -> None:
+        for key in sorted(k for k in node if k != "__leaves__"):
+            child_node = node[key]
+            folder = QTreeWidgetItem([key, str(self._count_leaves(child_node))])
+            folder.setForeground(0, QBrush(QColor(theme.TEXT_MUTED)))
+            folder.setForeground(1, QBrush(QColor(theme.TEXT_MUTED)))
+            folder.setTextAlignment(1, Qt.AlignRight | Qt.AlignVCenter)
+            parent.addChild(folder)
+            self._render_branch_tree(folder, child_node, kind, mark_current)
+            folder.setExpanded(True)
+
+        for label, full_name in sorted(node.get("__leaves__", [])):
+            item = QTreeWidgetItem([label, ""])
+            item.setData(0, _KIND_ROLE, kind)
+            item.setData(0, _DATA_ROLE, full_name)
+            if mark_current:
+                self._mark_if_current(item, full_name)
+                self._set_sync_badge(item, full_name)
+            parent.addChild(item)
+
+    @staticmethod
+    def _count_leaves(node: dict) -> int:
+        total = len(node.get("__leaves__", []))
+        for key, child in node.items():
+            if key != "__leaves__":
+                total += SidebarPanel._count_leaves(child)
+        return total
+
+    def _gitflow_full_name(self, kind: str, short_name: str) -> str:
+        assert self._gitflow is not None
+        prefix = {
+            K_GF_FEATURE: self._gitflow.config.feature_prefix,
+            K_GF_RELEASE: self._gitflow.config.release_prefix,
+            K_GF_HOTFIX: self._gitflow.config.hotfix_prefix,
+        }[kind]
+        return prefix + short_name
+
+    def _mark_active_repo(self, item: QTreeWidgetItem, repo_path: str) -> bool:
+        """Style l'item comme dépôt actif (coché, gras, accent, fond
+        teinté) s'il correspond au dépôt actuellement ouvert. Retourne
+        True si c'était le cas, pour que l'appelant sache où défiler."""
+        if self._active_repo_path is None or not _same_path(repo_path, self._active_repo_path):
+            return False
+        item.setText(0, f"● {item.text(0)}")
+        item.setForeground(0, QBrush(QColor(theme.ACCENT)))
+        font = item.font(0)
+        font.setBold(True)
+        item.setFont(0, font)
+        tint = QColor(theme.ACCENT)
+        tint.setAlpha(35)
+        item.setBackground(0, QBrush(tint))
+        item.setBackground(1, QBrush(tint))
+        item.setToolTip(0, f"{repo_path}  (dépôt actif)")
+        return True
+
+    def _mark_if_current(self, item: QTreeWidgetItem, branch: str) -> None:
+        if branch == self._current_branch:
+            item.setText(0, f"✓ {item.text(0)}")
+            item.setForeground(0, QBrush(QColor(theme.ACCENT)))
+            font = item.font(0)
+            font.setBold(True)
+            item.setFont(0, font)
+
+    def _set_sync_badge(self, item: QTreeWidgetItem, branch_name: str) -> None:
+        """Ajoute, dans la colonne de droite, un indicateur ↓N/↑N quand la
+        branche a divergé de son amont (nécessite pull/push). Rien si elle
+        n'a pas d'amont ou si elle est déjà à jour."""
+        ahead, behind = self._ahead_behind.get(branch_name, (0, 0))
+        if not ahead and not behind:
+            return
+
+        parts = []
+        if behind:
+            parts.append(f"↓{behind}")  # ↓N : à tirer (pull)
+        if ahead:
+            parts.append(f"↑{ahead}")  # ↑N : à pousser (push)
+
+        if behind and ahead:
+            color = theme.LANE_COLORS[4]  # violet : a divergé (pull ET push)
+            tip = f"{behind} commit(s) à tirer, {ahead} à pousser — la branche a divergé"
+        elif behind:
+            color = theme.LANE_COLORS[2]  # orange : pull nécessaire
+            tip = f"{behind} commit(s) en retard sur l'amont — pull nécessaire"
+        else:
+            color = theme.LANE_COLORS[0]  # vert : push nécessaire
+            tip = f"{ahead} commit(s) en avance sur l'amont — push nécessaire"
+
+        item.setText(1, " ".join(parts))
+        item.setForeground(1, QBrush(QColor(color)))
+        font = item.font(1)
+        font.setBold(True)
+        item.setFont(1, font)
+        item.setTextAlignment(1, Qt.AlignRight | Qt.AlignVCenter)
+        item.setToolTip(1, tip)
+
+    @staticmethod
+    def _add_section(tree: QTreeWidget, title: str, count: int) -> QTreeWidgetItem:
         item = QTreeWidgetItem([title.upper(), str(count) if count else ""])
         font = QFont("Segoe UI", 8)
         font.setBold(True)
@@ -149,7 +433,7 @@ class SidebarPanel(QWidget):
         item.setFont(1, font)
         item.setForeground(1, QBrush(QColor(theme.TEXT_MUTED)))
         item.setTextAlignment(1, Qt.AlignRight | Qt.AlignVCenter)
-        self.tree.addTopLevelItem(item)
+        tree.addTopLevelItem(item)
         item.setExpanded(True)
         return item
 
@@ -181,8 +465,9 @@ class SidebarPanel(QWidget):
             item.setHidden(not any_child)
             return any_child
 
-        for i in range(self.tree.topLevelItemCount()):
-            filter_item(self.tree.topLevelItem(i))
+        for tree in (self.repos_tree, self.refs_tree):
+            for i in range(tree.topLevelItemCount()):
+                filter_item(tree.topLevelItem(i))
 
     # ------------------------------------------------------------------
     # Interactions
@@ -194,14 +479,18 @@ class SidebarPanel(QWidget):
             self.open_repo_requested.emit(data)
         elif kind == K_LOCAL_BRANCH:
             self.checkout_requested.emit(data)
+        elif kind in (K_GF_FEATURE, K_GF_RELEASE, K_GF_HOTFIX):
+            self.checkout_requested.emit(self._gitflow_full_name(kind, data))
+        elif kind == K_GITFLOW_INIT:
+            self.gitflow_init_requested.emit()
 
-    def _show_context_menu(self, pos) -> None:
-        item = self.tree.itemAt(pos)
+    def _show_context_menu(self, tree: QTreeWidget, pos) -> None:
+        item = tree.itemAt(pos)
         menu = QMenu(self)
         kind = item.data(0, _KIND_ROLE) if item else None
         data = item.data(0, _DATA_ROLE) if item else None
 
-        if kind == K_SECTION_WORKSPACES or item is None:
+        if kind == K_SECTION_WORKSPACES or (item is None and tree is self.repos_tree):
             menu.addAction("Nouvel espace de travail…", self._create_workspace)
         elif kind == K_WORKSPACE:
             name = item.text(0)
@@ -220,10 +509,35 @@ class SidebarPanel(QWidget):
         elif kind == K_LOCAL_BRANCH:
             menu.addAction("Checkout", lambda: self.checkout_requested.emit(data))
             menu.addAction("Supprimer la branche", lambda: self._confirm_delete_branch(data))
+        elif kind == K_SECTION_GITFLOW:
+            if self._gitflow is None:
+                menu.addAction("Initialiser Git Flow…", self.gitflow_init_requested.emit)
+            else:
+                menu.addAction(
+                    "Démarrer une feature…", lambda: self.gitflow_start_requested.emit(K_GF_FEATURE)
+                )
+                menu.addAction(
+                    "Démarrer une release…", lambda: self.gitflow_start_requested.emit(K_GF_RELEASE)
+                )
+                menu.addAction(
+                    "Démarrer un hotfix…", lambda: self.gitflow_start_requested.emit(K_GF_HOTFIX)
+                )
+        elif kind == K_GITFLOW_INIT:
+            menu.addAction("Initialiser Git Flow…", self.gitflow_init_requested.emit)
+        elif kind in (K_GF_FEATURE, K_GF_RELEASE, K_GF_HOTFIX):
+            full = self._gitflow_full_name(kind, data)
+            finish_label = {
+                K_GF_FEATURE: "Terminer la feature (merge dans develop)",
+                K_GF_RELEASE: "Terminer la release (merge main + develop, tag)",
+                K_GF_HOTFIX: "Terminer le hotfix (merge main + develop, tag)",
+            }[kind]
+            menu.addAction("Checkout", lambda: self.checkout_requested.emit(full))
+            menu.addAction(finish_label, lambda: self.gitflow_finish_requested.emit(kind, data))
+            menu.addAction("Supprimer la branche", lambda: self._confirm_delete_branch(full))
         else:
             return
 
-        menu.exec(self.tree.viewport().mapToGlobal(pos))
+        menu.exec(tree.viewport().mapToGlobal(pos))
 
     # ------------------------------------------------------------------
     # Actions espaces de travail
