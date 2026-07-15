@@ -103,7 +103,8 @@ Ne jamais afficher cette valeur, la placer dans un artefact Actions, ni ajouter
 
 ### Couper une version
 
-1. Ouvrir **Actions → Release GitKrakit update → Run workflow**.
+1. Ouvrir **Actions → Release GitKrakit update → Run workflow**, puis conserver
+   la branche `main`. Le workflow refuse explicitement toute autre branche.
 2. Saisir la nouvelle version au format `MAJOR.MINOR.PATCH`, par exemple
    `1.0.1`.
 3. Le workflow met à jour `gitkrakit.__version__`, exécute les tests, crée le

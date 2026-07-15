@@ -22,6 +22,13 @@ jobs:
       GH_TOKEN: ${{ github.token }}
 
     steps:
+      - name: Require the main branch
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -ne 'refs/heads/main') {
+            throw "Release workflow must run from main, not $env:GITHUB_REF_NAME."
+          }
+
       - name: Check out repository
         uses: actions/checkout@v4
         with:
