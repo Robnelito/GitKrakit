@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 
 from gitkrakit import __version__, theme
 from gitkrakit.core import CommitInfo, GitBackend, GitBackendError, GitFlow
+from gitkrakit.core.acp_commit import generate_commit_message as generate_acp_commit_message
 from gitkrakit.ui import icons
 from gitkrakit.ui.graph_view import GraphPanel
 from gitkrakit.ui.panels import (
@@ -76,6 +77,7 @@ class MainWindow(QMainWindow):
         self._operation_label = ""
         self._operation_done_message: str | None = None
         self._operation_silent = False
+        self._operation_refresh = True
         self._operation_on_success: Callable[[Any], None] | None = None
         self._operation_on_error: Callable[[str], None] | None = None
         self._close_when_idle = False
@@ -247,6 +249,9 @@ class MainWindow(QMainWindow):
         self.staging_panel.unstage_requested.connect(self._unstage)
         self.staging_panel.commit_requested.connect(self._commit)
         self.staging_panel.diff_requested.connect(self._show_working_diff)
+        self.staging_panel.generate_message_requested.connect(
+            self._generate_commit_message
+        )
         right_panel.addTab(self.staging_panel, "Staging")
 
         self.details_panel = DetailsPanel()
@@ -545,6 +550,30 @@ class MainWindow(QMainWindow):
         self.staging_panel.clear_message()
         self.refresh_all()
 
+    def _generate_commit_message(self, provider_id: str) -> None:
+        if not self.backend.is_open or self._is_busy:
+            return
+        working_dir = self.backend.working_dir
+        provider_label = "Codex CLI" if provider_id == "codex" else "Claude Code"
+
+        def generate() -> str:
+            diff_text = self.backend.staged_diff()
+            return generate_acp_commit_message(provider_id, diff_text, working_dir)
+
+        def generated(message: str) -> None:
+            self.staging_panel.set_commit_message(message)
+            self.statusBar().showMessage(
+                f"Message généré avec {provider_label} — vérifie-le avant de committer.",
+                7000,
+            )
+
+        self._start_backend_operation(
+            generate,
+            label=f"{provider_label} analyse le diff indexé via ACP…",
+            on_success=generated,
+            refresh_after=False,
+        )
+
     @property
     def _is_busy(self) -> bool:
         return self._operation_thread is not None
@@ -567,6 +596,7 @@ class MainWindow(QMainWindow):
         silent: bool = False,
         on_success: Callable[[Any], None] | None = None,
         on_error: Callable[[str], None] | None = None,
+        refresh_after: bool = True,
     ) -> bool:
         if not self.backend.is_open:
             if not silent:
@@ -580,6 +610,7 @@ class MainWindow(QMainWindow):
         self._operation_label = label
         self._operation_done_message = done_message
         self._operation_silent = silent
+        self._operation_refresh = refresh_after
         self._operation_on_success = on_success
         self._operation_on_error = on_error
         self._operation_thread = _OperationThread(fn, self)
@@ -596,6 +627,7 @@ class MainWindow(QMainWindow):
         error = thread.error
         result = thread.result
         silent = self._operation_silent
+        refresh_after = self._operation_refresh
         done_message = self._operation_done_message
         on_success = self._operation_on_success
         on_error = self._operation_on_error
@@ -606,7 +638,8 @@ class MainWindow(QMainWindow):
         if error is not None:
             message = str(error)
             # A failed pull/merge can still have changed the working tree.
-            self.refresh_all(show_errors=False)
+            if refresh_after:
+                self.refresh_all(show_errors=False)
             if on_error is not None:
                 on_error(message)
             elif silent:
@@ -614,7 +647,8 @@ class MainWindow(QMainWindow):
             else:
                 QMessageBox.critical(self, "Opération Git échouée", message)
         else:
-            self.refresh_all(show_errors=not silent)
+            if refresh_after:
+                self.refresh_all(show_errors=not silent)
             if on_success is not None:
                 on_success(result)
             else:

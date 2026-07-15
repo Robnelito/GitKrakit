@@ -376,6 +376,15 @@ class GitBackend:
         except Exception as exc:
             raise GitBackendError(f"Échec du commit: {exc}") from exc
 
+    @_synchronized
+    def staged_diff(self) -> str:
+        """Return the complete staged patch used for commit-message generation."""
+        self._require_repo()
+        try:
+            return self.repo.git.diff("--cached", "--no-ext-diff", "--unified=3")
+        except git.GitCommandError as exc:
+            raise GitBackendError(f"Impossible de lire le diff indexé: {exc}") from exc
+
     # ------------------------------------------------------------------
     # Remote : fetch / pull / push
     # ------------------------------------------------------------------

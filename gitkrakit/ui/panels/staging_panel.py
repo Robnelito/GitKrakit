@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QComboBox,
+    QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
@@ -26,6 +28,7 @@ class StagingPanel(QWidget):
     unstage_requested = Signal(list)    # list[str] : chemins à désindexer
     commit_requested = Signal(str)      # message de commit
     diff_requested = Signal(str, bool)  # (chemin, staged) : voir le diff
+    generate_message_requested = Signal(str)  # fournisseur ACP : codex | claude
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -82,6 +85,22 @@ class StagingPanel(QWidget):
         self.commit_message_edit.textChanged.connect(self._update_buttons)
         layout.addWidget(self.commit_message_edit)
 
+        generator_row = QHBoxLayout()
+        self.agent_combo = QComboBox()
+        self.agent_combo.setAccessibleName("Agent ACP pour le message de commit")
+        self.agent_combo.setToolTip("Choisir l'agent local utilisé via ACP")
+        self.agent_combo.addItem("Codex CLI", "codex")
+        self.agent_combo.addItem("Claude Code", "claude")
+        generator_row.addWidget(self.agent_combo, stretch=1)
+
+        self.generate_btn = QPushButton("Générer via ACP")
+        self.generate_btn.setToolTip(
+            "Analyser uniquement le diff indexé et proposer un message Conventional Commit"
+        )
+        self.generate_btn.clicked.connect(self._emit_generate_message)
+        generator_row.addWidget(self.generate_btn)
+        layout.addLayout(generator_row)
+
         self.commit_btn = QPushButton("Créer le commit")
         self.commit_btn.setObjectName("primaryButton")
         self.commit_btn.setShortcut("Ctrl+Return")
@@ -110,11 +129,17 @@ class StagingPanel(QWidget):
     def clear_message(self) -> None:
         self.commit_message_edit.clear()
 
+    def set_commit_message(self, message: str) -> None:
+        self.commit_message_edit.setPlainText(message)
+        self.commit_message_edit.setFocus()
+        self.commit_message_edit.selectAll()
+
     def _update_buttons(self) -> None:
         self.stage_btn.setEnabled(bool(self.unstaged_list.selectedItems()))
         self.unstage_btn.setEnabled(bool(self.staged_list.selectedItems()))
         has_message = bool(self.commit_message_edit.toPlainText().strip())
         self.commit_btn.setEnabled(self._staged_count > 0 and has_message)
+        self.generate_btn.setEnabled(self._staged_count > 0)
 
     # ------------------------------------------------------------------
     def _emit_stage(self) -> None:
@@ -129,6 +154,11 @@ class StagingPanel(QWidget):
 
     def _emit_commit(self) -> None:
         self.commit_requested.emit(self.commit_message_edit.toPlainText().strip())
+
+    def _emit_generate_message(self) -> None:
+        provider = self.agent_combo.currentData()
+        if provider:
+            self.generate_message_requested.emit(str(provider))
 
     @staticmethod
     def _selected_paths(list_widget: QListWidget) -> list[str]:

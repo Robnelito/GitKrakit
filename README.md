@@ -16,6 +16,7 @@ complet de GitKraken (voir "Limites" plus bas).
 - Détails d'un commit (auteur, date, parents, refs, message)
 - Diff côte à côte par fichier avec coloration syntaxique
 - Git Flow : initialisation, feature, release et hotfix
+- Génération de messages Conventional Commits via ACP avec Codex CLI ou Claude Code
 - Mini-terminal git intégré avec arguments entre guillemets
 - Espaces de travail : groupes nommés de dépôts + dépôts récents, persistés
   dans `~/.gitkrakit/workspaces.json`
@@ -34,6 +35,33 @@ Pour une installation modifiable avec les outils de développement :
 pip install -e ".[dev]"
 ```
 
+### Génération de message via ACP
+
+GitKrakit est un client [Agent Client Protocol](https://agentclientprotocol.com/).
+Il démarre un adaptateur ACP local via `npx`, puis lui transmet uniquement le
+diff indexé et un prompt conforme à
+[Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/).
+
+Prérequis :
+
+- Node.js avec `npx` disponible dans le `PATH` ;
+- Codex CLI ou Claude Code installé et déjà authentifié ;
+- les dépendances Python du projet installées.
+
+Les adaptateurs sont téléchargés à la demande et mis en cache par `npx` :
+
+- Codex : `@agentclientprotocol/codex-acp`
+- Claude Code : `@agentclientprotocol/claude-agent-acp`
+
+Dans le panneau **Staging**, indexe les fichiers, choisis l'agent, puis clique
+sur **Générer via ACP**. Le résultat remplit l'éditeur ; GitKrakit ne crée
+jamais le commit automatiquement.
+
+La session de génération est isolée en lecture seule. Les permissions d'outil
+sont refusées, les instructions éventuellement présentes dans le diff sont
+traitées comme des données non fiables, et les sorties non conformes à
+Conventional Commits sont rejetées.
+
 ## Lancement
 
 ```bash
@@ -50,6 +78,7 @@ GitKrakit/
 │   ├── theme.py                   # palette et feuille de style centralisées
 │   ├── core/                      # logique métier, aucune dépendance Qt
 │   │   ├── command_parser.py      # arguments du terminal intégré
+│   │   ├── acp_commit.py          # client ACP + prompt Conventional Commits
 │   │   ├── diff_parser.py         # diff unifié vers vue côte à côte
 │   │   ├── git_backend.py         # toute la logique Git (GitPython)
 │   │   ├── gitflow.py             # opérations Git Flow

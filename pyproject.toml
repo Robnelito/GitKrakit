@@ -11,6 +11,7 @@ requires-python = ">=3.10"
 dependencies = [
     "PySide6>=6.6.0",
     "GitPython>=3.1.40",
+    "agent-client-protocol>=0.11.0,<0.12",
 ]
 
 [project.optional-dependencies]

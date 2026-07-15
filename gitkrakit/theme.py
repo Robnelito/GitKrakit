@@ -89,6 +89,19 @@ QLineEdit {{
 QLineEdit:focus {{
     border: 1px solid {ACCENT};
 }}
+QComboBox {{
+    background-color: {PANEL_BG};
+    border: 1px solid {BORDER};
+    border-radius: 6px;
+    padding: 6px 8px;
+}}
+QComboBox:focus {{ border-color: {ACCENT}; }}
+QComboBox::drop-down {{ border: none; width: 22px; }}
+QComboBox QAbstractItemView {{
+    background-color: {PANEL_BG};
+    border: 1px solid {BORDER};
+    selection-background-color: {ACCENT_DIM};
+}}
 
 /* ---- boutons ---- */
 QPushButton {{

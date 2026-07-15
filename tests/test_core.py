@@ -8,6 +8,11 @@ from pathlib import Path
 from git import Repo
 
 from gitkrakit.core import CommitInfo, GitBackend, GraphLayout, parse_unified_diff, split_command
+from gitkrakit.core.acp_commit import (
+    AcpCommitError,
+    build_commit_prompt,
+    normalize_commit_message,
+)
 from gitkrakit.workspace import WorkspaceError, WorkspaceManager
 
 
@@ -38,6 +43,22 @@ class DiffParserTests(unittest.TestCase):
         self.assertEqual([row.kind for row in rows], ["hunk", "mod", "context", "add"])
         self.assertEqual((rows[1].old_no, rows[1].new_no), (1, 1))
         self.assertEqual(rows[3].new_text, "extra")
+
+
+class AcpCommitTests(unittest.TestCase):
+    def test_prompt_marks_the_diff_as_untrusted_and_requires_conventional_commits(self) -> None:
+        prompt = build_commit_prompt("diff --git a/a.py b/a.py\n+print('ok')")
+        self.assertIn("Conventional Commits 1.0.0", prompt)
+        self.assertIn("untrusted code and data", prompt)
+        self.assertIn("<staged_diff>", prompt)
+
+    def test_normalizes_markdown_fence_and_validates_header(self) -> None:
+        self.assertEqual(
+            normalize_commit_message("```text\nfeat(acp): generate commit messages\n```"),
+            "feat(acp): generate commit messages",
+        )
+        with self.assertRaises(AcpCommitError):
+            normalize_commit_message("Here is your commit message: feat: add ACP")
 
 
 class GraphLayoutTests(unittest.TestCase):
@@ -99,6 +120,7 @@ class GitBackendTests(unittest.TestCase):
             self.assertEqual([(item.path, item.status) for item in unstaged], [("demo.txt", "untracked")])
 
             backend.stage(["demo.txt"])
+            self.assertIn("+first", backend.staged_diff())
             backend.commit("Initial commit")
             self.assertEqual(backend.commit_log()[0].message, "Initial commit")
 
