@@ -14,7 +14,15 @@ GraphPanel = en-tête de colonnes redimensionnable + GraphView (QGraphicsView).
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal, QRectF
+from PySide6.QtCore import (
+    QAbstractAnimation,
+    QEasingCurve,
+    QPropertyAnimation,
+    QRectF,
+    QTimer,
+    Qt,
+    Signal,
+)
 from PySide6.QtGui import (
     QBrush,
     QColor,
@@ -26,9 +34,9 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QGraphicsView,
+    QFrame,
     QGraphicsScene,
     QGraphicsEllipseItem,
-    QGraphicsLineItem,
     QGraphicsPathItem,
     QGraphicsRectItem,
     QGraphicsSimpleTextItem,
@@ -43,10 +51,12 @@ from PySide6.QtWidgets import (
 from gitkrakit.core import GraphLayout, GraphNode
 from gitkrakit import theme
 
-ROW_HEIGHT = 28
-LANE_WIDTH = 16
-NODE_RADIUS = 5
-MERGE_NODE_RADIUS = 3.5
+ROW_HEIGHT = 30
+LANE_WIDTH = 18
+GRAPH_LEFT_PADDING = 14
+GRAPH_RIGHT_PADDING = 10
+NODE_RADIUS = 4.5
+MERGE_NODE_RADIUS = 5
 
 # largeurs de colonnes par défaut (l'utilisateur peut les redimensionner
 # via les poignées de l'en-tête ; voir GraphPanel)
@@ -59,8 +69,9 @@ MIN_REF_COL_WIDTH = 70
 MIN_GRAPH_COL_WIDTH = 50
 MIN_MSG_COL_WIDTH = 150
 
-HANDLE_WIDTH = 1  # largeur des poignées de redimensionnement de l'en-tête
-CHIP_PADDING = 7
+HANDLE_WIDTH = 5  # cible confortable ; seule une ligne centrale reste visible
+SCROLLBAR_RESERVE = 10
+CHIP_PADDING = 6
 MAX_VISIBLE_REFS = 2  # au-delà : pastille "+N"
 
 
@@ -73,9 +84,11 @@ class CommitRowItem(QGraphicsRectItem):
         self._view = view
         self._hovered = False
 
-        tint = QColor(node.color)
-        tint.setAlpha(14)
-        self._base_brush = QBrush(tint)
+        # Neutral zebra striping keeps long histories readable without
+        # competing with lane colors.
+        base = QColor(theme.PANEL_BG)
+        base.setAlpha(34 if node.row % 2 else 0)
+        self._base_brush = QBrush(base)
 
         hover = QColor(theme.SURFACE)
         hover.setAlpha(150)
@@ -119,22 +132,29 @@ class CommitNodeItem(QGraphicsEllipseItem):
         super().__init__(-r, -r, 2 * r, 2 * r)
         self.node = node
         self._view = view
-        self.setBrush(QBrush(QColor(node.color)))
-        self.setPen(QPen(QColor(theme.BACKGROUND), 2))
+        if len(node.commit.parents) > 1:
+            self.setBrush(QBrush(QColor(theme.BACKGROUND)))
+            self._normal_pen = QPen(QColor(node.color), 2.2)
+        else:
+            self.setBrush(QBrush(QColor(node.color)))
+            self._normal_pen = QPen(QColor(theme.BACKGROUND), 1.5)
+        self._normal_pen.setJoinStyle(Qt.RoundJoin)
+        self.setPen(self._normal_pen)
         self.setZValue(10)
         self.setAcceptHoverEvents(True)
         self.setCursor(Qt.PointingHandCursor)
+        self.setToolTip(f"{node.commit.short_sha} — {node.commit.message}")
 
     def mousePressEvent(self, event):
         self._view.select_commit(self.node.commit.sha)
         super().mousePressEvent(event)
 
     def hoverEnterEvent(self, event):
-        self.setPen(QPen(QColor(theme.HIGHLIGHT), 2))
+        self.setPen(QPen(QColor(theme.ACCENT), 2.2))
         super().hoverEnterEvent(event)
 
     def hoverLeaveEvent(self, event):
-        self.setPen(QPen(QColor(theme.BACKGROUND), 2))
+        self.setPen(self._normal_pen)
         super().hoverLeaveEvent(event)
 
 
@@ -147,6 +167,7 @@ class GraphView(QGraphicsView):
         self.setScene(self._scene)
         self.setRenderHint(QPainter.Antialiasing)
         self.setRenderHint(QPainter.TextAntialiasing)
+        self.setRenderHint(QPainter.SmoothPixmapTransform)
         # sans ça, Qt centre la scène quand elle est plus petite que la vue
         self.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
@@ -158,17 +179,26 @@ class GraphView(QGraphicsView):
         self._content_width = 0.0
         self.selected_sha: str | None = None
 
+        self._scroll_target = 0
+        self._scroll_animation = QPropertyAnimation(self.verticalScrollBar(), b"value", self)
+        self._scroll_animation.setDuration(140)
+        self._scroll_animation.setEasingCurve(QEasingCurve.OutCubic)
+
         # largeurs de colonnes ; modifiables via set_column_widths()
         self.col_ref = DEFAULT_REF_COL_WIDTH
         self.col_graph = DEFAULT_GRAPH_COL_WIDTH
         self.col_msg = DEFAULT_MSG_COL_WIDTH
         self.graph_auto_size = True  # False dès que l'utilisateur redimensionne
 
-        self._ui_font = QFont("Segoe UI", 9)
-        self._chip_font = QFont("Segoe UI", 8)
+        self._ui_font = QFont(theme.UI_FONT_FAMILY, 9)
+        self._chip_font = QFont(theme.UI_FONT_FAMILY, 8)
 
     def set_column_widths(
-        self, ref: float | None = None, graph: float | None = None, msg: float | None = None
+        self,
+        ref: float | None = None,
+        graph: float | None = None,
+        msg: float | None = None,
+        graph_manual: bool = True,
     ) -> None:
         """Applique de nouvelles largeurs de colonnes (glissées depuis
         l'en-tête) et redessine. `graph` marque la colonne graphe comme
@@ -178,7 +208,8 @@ class GraphView(QGraphicsView):
             self.col_ref = ref
         if graph is not None:
             self.col_graph = graph
-            self.graph_auto_size = False
+            if graph_manual:
+                self.graph_auto_size = False
         if msg is not None:
             self.col_msg = msg
         self._redraw()
@@ -190,11 +221,15 @@ class GraphView(QGraphicsView):
         self._graph_layout = GraphLayout(commits)
         if self.graph_auto_size:
             self.col_graph = max(
-                MIN_GRAPH_COL_WIDTH, (self._graph_layout.lane_count + 1) * LANE_WIDTH + 12
+                MIN_GRAPH_COL_WIDTH,
+                GRAPH_LEFT_PADDING
+                + self._graph_layout.lane_count * LANE_WIDTH
+                + GRAPH_RIGHT_PADDING,
             )
         self._redraw()
         self.verticalScrollBar().setValue(v_scroll)
         self.horizontalScrollBar().setValue(h_scroll)
+        self._scroll_target = v_scroll
 
     def select_commit(self, sha: str) -> None:
         previous = self._rows.get(self.selected_sha)
@@ -205,6 +240,15 @@ class GraphView(QGraphicsView):
         if current is not None:
             current.update_state()
         self.commit_selected.emit(sha)
+
+    def apply_theme(self) -> None:
+        self._ui_font.setFamily(theme.UI_FONT_FAMILY)
+        self._chip_font.setFamily(theme.UI_FONT_FAMILY)
+        self.setBackgroundBrush(QBrush(QColor(theme.BACKGROUND)))
+        if self._graph_layout is not None:
+            for node in self._graph_layout.nodes:
+                node.color = theme.LANE_COLORS[node.lane % len(theme.LANE_COLORS)]
+        self._redraw()
 
     # ------------------------------------------------------------------
     def _redraw(self) -> None:
@@ -227,19 +271,23 @@ class GraphView(QGraphicsView):
             self._scene.addItem(row)
             self._rows[node.commit.sha] = row
 
-        # 1. lignes commit -> parents
+        # 1. Courbes commit -> parents. Lane changes happen within roughly
+        # one row, then continue vertically, which avoids long diagonals.
         for node in layout.nodes:
-            x0 = graph_x + node.lane * LANE_WIDTH
+            x0 = graph_x + GRAPH_LEFT_PADDING + node.lane * LANE_WIDTH
             y0 = node.row * ROW_HEIGHT + ROW_HEIGHT / 2
-            pen = QPen(QColor(node.color), 2)
+            line_color = QColor(node.color)
+            line_color.setAlpha(225)
+            pen = QPen(line_color, 2.2)
             pen.setCapStyle(Qt.RoundCap)
+            pen.setJoinStyle(Qt.RoundJoin)
             for parent_lane, parent_row in node.parent_lanes:
-                x1 = graph_x + parent_lane * LANE_WIDTH
+                x1 = graph_x + GRAPH_LEFT_PADDING + parent_lane * LANE_WIDTH
                 y1 = parent_row * ROW_HEIGHT + ROW_HEIGHT / 2
-                line = QGraphicsLineItem(x0, y0, x1, y1)
-                line.setPen(pen)
-                line.setZValue(1)
-                self._scene.addItem(line)
+                edge = QGraphicsPathItem(self._connection_path(x0, y0, x1, y1))
+                edge.setPen(pen)
+                edge.setZValue(1)
+                self._scene.addItem(edge)
 
         # 2. noeuds + colonnes texte
         metrics = QFontMetricsF(self._ui_font)
@@ -247,28 +295,79 @@ class GraphView(QGraphicsView):
             y_center = node.row * ROW_HEIGHT + ROW_HEIGHT / 2
 
             item = CommitNodeItem(node, self)
-            item.setPos(graph_x + node.lane * LANE_WIDTH, y_center)
+            item.setPos(graph_x + GRAPH_LEFT_PADDING + node.lane * LANE_WIDTH, y_center)
             self._scene.addItem(item)
 
             self._draw_refs(node, y_center)
 
             is_merge = len(node.commit.parents) > 1
-            message = metrics.elidedText(node.commit.message, Qt.ElideRight, self.col_msg - 8)
+            message = metrics.elidedText(node.commit.message, Qt.ElideRight, self.col_msg - 18)
             self._draw_text(
                 message,
                 self._ui_font,
                 theme.TEXT_MUTED if is_merge else theme.TEXT,
-                msg_x,
+                msg_x + 10,
                 y_center,
             )
 
             date_text = f"{node.commit.date:%d/%m/%Y @ %H:%M}"
-            self._draw_text(date_text, self._ui_font, theme.TEXT_MUTED, date_x, y_center)
+            self._draw_text(date_text, self._ui_font, theme.TEXT_MUTED, date_x + 10, y_center)
 
         total_height = len(layout.nodes) * ROW_HEIGHT + ROW_HEIGHT / 2
         self._content_width = total_width
         self._scene.setSceneRect(QRectF(0, 0, total_width, total_height))
         self._stretch_rows()
+
+    @staticmethod
+    def _connection_path(x0: float, y0: float, x1: float, y1: float) -> QPainterPath:
+        path = QPainterPath()
+        path.moveTo(x0, y0)
+        if abs(x1 - x0) < 0.1:
+            path.lineTo(x1, y1)
+            return path
+
+        direction = 1.0 if y1 >= y0 else -1.0
+        bend = min(abs(y1 - y0), ROW_HEIGHT * 1.15)
+        bend_end = y0 + direction * bend
+        path.cubicTo(
+            x0,
+            y0 + direction * bend * 0.52,
+            x1,
+            bend_end - direction * bend * 0.52,
+            x1,
+            bend_end,
+        )
+        if abs(y1 - bend_end) > 0.1:
+            path.lineTo(x1, y1)
+        return path
+
+    def wheelEvent(self, event) -> None:
+        """Animate discrete mouse wheels while preserving touchpad pixels."""
+        pixel_delta = event.pixelDelta().y()
+        if pixel_delta:
+            bar = self.verticalScrollBar()
+            bar.setValue(bar.value() - pixel_delta)
+            self._scroll_target = bar.value()
+            event.accept()
+            return
+
+        angle_delta = event.angleDelta().y()
+        if not angle_delta:
+            super().wheelEvent(event)
+            return
+
+        bar = self.verticalScrollBar()
+        if self._scroll_animation.state() == QAbstractAnimation.Stopped:
+            self._scroll_target = bar.value()
+        distance = (angle_delta / 120.0) * ROW_HEIGHT * 3
+        self._scroll_target = int(
+            max(bar.minimum(), min(bar.maximum(), self._scroll_target - distance))
+        )
+        self._scroll_animation.stop()
+        self._scroll_animation.setStartValue(bar.value())
+        self._scroll_animation.setEndValue(self._scroll_target)
+        self._scroll_animation.start()
+        event.accept()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -294,15 +393,23 @@ class GraphView(QGraphicsView):
         refs = node.commit.refs
         if not refs:
             return
-        visible = refs[:MAX_VISIBLE_REFS]
-        overflow = len(refs) - len(visible)
+        x = 10.0
+        right_edge = self.col_ref - 10
+        drawn = 0
+        for ref in refs[:MAX_VISIBLE_REFS]:
+            remaining = len(refs) - drawn - 1
+            reserve = 34 if remaining else 0
+            available = right_edge - x - reserve - (4 if reserve else 0)
+            if available < 36:
+                break
+            x = self._draw_chip(ref, node.color, x, y_center, max_width=available) + 4
+            drawn += 1
 
-        x = 6.0
-        available = self.col_ref - 46  # marge pour la pastille "+N" éventuelle
-        for ref in visible:
-            x = self._draw_chip(ref, node.color, x, y_center, max_width=max(30, available)) + 4
-        if overflow > 0:
-            self._draw_chip(f"+{overflow}", node.color, x, y_center, max_width=40)
+        overflow = len(refs) - drawn
+        if overflow > 0 and right_edge - x >= 28:
+            self._draw_chip(
+                f"+{overflow}", node.color, x, y_center, max_width=right_edge - x
+            )
 
     def _draw_chip(
         self, text: str, color: str, x: float, y_center: float, max_width: float
@@ -313,12 +420,14 @@ class GraphView(QGraphicsView):
         height = metrics.height() + 4
 
         path = QPainterPath()
-        path.addRoundedRect(QRectF(x, y_center - height / 2, width, height), 4, 4)
+        path.addRoundedRect(QRectF(x, y_center - height / 2, width, height), 5, 5)
         chip = QGraphicsPathItem(path)
         background = QColor(color)
-        background.setAlpha(38)
+        background.setAlpha(46)
         chip.setBrush(QBrush(background))
-        chip.setPen(QPen(QColor(color), 1))
+        outline = QColor(color)
+        outline.setAlpha(190)
+        chip.setPen(QPen(outline, 1))
         chip.setZValue(4)
         self._scene.addItem(chip)
 
@@ -339,13 +448,20 @@ class GraphView(QGraphicsView):
         self._scene.addItem(item)
 
 
-def _col_label(text: str) -> QLabel:
-    label = QLabel(text.upper())
-    label.setStyleSheet(
-        f"color: {theme.TEXT_MUTED}; font-size: 8pt; font-weight: bold;"
-        "background: transparent; border: none; padding-left: 6px;"
-    )
+def _col_label(text: str, tooltip: str) -> QLabel:
+    label = QLabel(text)
+    label.setObjectName("commitHeaderLabel")
+    label.setToolTip(tooltip)
+    label.setAccessibleName(f"Colonne {text}")
+    _style_col_label(label)
     return label
+
+
+def _style_col_label(label: QLabel) -> None:
+    label.setStyleSheet(
+        f"color: {theme.TEXT_MUTED}; font-size: 8.5pt; font-weight: 600;"
+        "background: transparent; border: none; padding: 0 10px;"
+    )
 
 
 class GraphPanel(QWidget):
@@ -366,33 +482,52 @@ class GraphPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        header = QWidget()
-        header.setStyleSheet(
+        self._header = QWidget()
+        self._header.setObjectName("commitTableHeader")
+        self._header.setFixedHeight(34)
+        self._header.setStyleSheet(
             f"background-color: {theme.PANEL_BG}; border-bottom: 1px solid {theme.BORDER};"
         )
-        header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(0, 4, 0, 4)
+        header_layout = QHBoxLayout(self._header)
+        header_layout.setContentsMargins(0, 0, 0, 0)
         header_layout.setSpacing(0)
 
         self.header_splitter = QSplitter(Qt.Horizontal)
         self.header_splitter.setHandleWidth(HANDLE_WIDTH)
         self.header_splitter.setChildrenCollapsible(False)
         self.header_splitter.setStyleSheet(
-            f"QSplitter::handle {{ background-color: {theme.BORDER}; }}"
-            f"QSplitter::handle:hover {{ background-color: {theme.ACCENT}; }}"
+            "QSplitter::handle { background-color: transparent; "
+            f"border-left: 1px solid {theme.BORDER}; margin: 8px 2px; }}"
+            "QSplitter::handle:hover { background-color: transparent; "
+            f"border-left-color: {theme.ACCENT}; }}"
         )
 
-        self._ref_header = _col_label("Branche / Tag")
+        resize_hint = "Fais glisser le séparateur pour redimensionner la colonne."
+        self._ref_header = _col_label(
+            "Références",
+            f"Branches et tags pointant vers le commit. {resize_hint}",
+        )
         self._ref_header.setMinimumWidth(MIN_REF_COL_WIDTH)
         self.header_splitter.addWidget(self._ref_header)
 
-        self._graph_header = _col_label("Graphe")
+        self._graph_header = _col_label(
+            "Graphe",
+            f"Relations de parenté entre les commits. {resize_hint}",
+        )
+        self._graph_header.setAlignment(Qt.AlignCenter)
         self._graph_header.setMinimumWidth(MIN_GRAPH_COL_WIDTH)
         self.header_splitter.addWidget(self._graph_header)
 
-        self._msg_header = _col_label("Message de commit")
+        self._msg_header = _col_label(
+            "Message",
+            f"Message du commit. {resize_hint}",
+        )
         self._msg_header.setMinimumWidth(MIN_MSG_COL_WIDTH)
         self.header_splitter.addWidget(self._msg_header)
+
+        self.header_splitter.setStretchFactor(0, 0)
+        self.header_splitter.setStretchFactor(1, 0)
+        self.header_splitter.setStretchFactor(2, 1)
 
         self.header_splitter.setSizes(
             [DEFAULT_REF_COL_WIDTH, DEFAULT_GRAPH_COL_WIDTH, DEFAULT_MSG_COL_WIDTH]
@@ -400,13 +535,19 @@ class GraphPanel(QWidget):
         self.header_splitter.splitterMoved.connect(self._on_splitter_moved)
         header_layout.addWidget(self.header_splitter, stretch=1)
 
-        date_header = _col_label("Date / Heure")
-        date_header.setFixedWidth(DATE_COL_WIDTH)
-        header_layout.addWidget(date_header)
+        self._date_header = _col_label("Date", "Date et heure du commit.")
+        self._date_header.setFixedWidth(DATE_COL_WIDTH)
+        header_layout.addWidget(self._date_header)
 
-        layout.addWidget(header)
+        scrollbar_gutter = QWidget()
+        scrollbar_gutter.setFixedWidth(SCROLLBAR_RESERVE)
+        header_layout.addWidget(scrollbar_gutter)
+
+        layout.addWidget(self._header)
 
         self.view = GraphView()
+        self.view.setFrameShape(QFrame.NoFrame)
+        self.view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         self.view.commit_selected.connect(self.commit_selected)
         self.empty_label = QLabel(
             "Ce dépôt ne contient encore aucun commit.\nCrée un premier commit depuis le panneau Staging."
@@ -421,6 +562,26 @@ class GraphPanel(QWidget):
         self.content_stack.setCurrentWidget(self.empty_label)
         layout.addWidget(self.content_stack)
 
+        self._column_sync_timer = QTimer(self)
+        self._column_sync_timer.setSingleShot(True)
+        self._column_sync_timer.setInterval(0)
+        self._column_sync_timer.timeout.connect(self._sync_view_columns)
+
+    def apply_theme(self) -> None:
+        self._header.setStyleSheet(
+            f"background-color: {theme.PANEL_BG}; border-bottom: 1px solid {theme.BORDER};"
+        )
+        for label in (self._ref_header, self._graph_header, self._msg_header, self._date_header):
+            _style_col_label(label)
+        self.header_splitter.setStyleSheet(
+            "QSplitter::handle { background-color: transparent; "
+            f"border-left: 1px solid {theme.BORDER}; margin: 8px 2px; }}"
+            "QSplitter::handle:hover { background-color: transparent; "
+            f"border-left-color: {theme.ACCENT}; }}"
+        )
+        self.empty_label.setStyleSheet(f"color: {theme.TEXT_MUTED}; padding: 32px;")
+        self.view.apply_theme()
+
     def set_commits(self, commits) -> None:
         self.view.set_commits(commits)
         self.content_stack.setCurrentWidget(self.view if commits else self.empty_label)
@@ -430,7 +591,25 @@ class GraphPanel(QWidget):
             sizes = self.header_splitter.sizes()
             sizes[1] = int(self.view.col_graph)
             self.header_splitter.setSizes(sizes)
+        self._sync_view_columns()
 
     def _on_splitter_moved(self, _pos: int, _index: int) -> None:
         ref, graph, msg = self.header_splitter.sizes()
-        self.view.set_column_widths(ref=ref, graph=graph, msg=msg)
+        self.view.set_column_widths(ref=ref, graph=graph, msg=msg, graph_manual=True)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if hasattr(self, "_column_sync_timer"):
+            self._column_sync_timer.start()
+
+    def _sync_view_columns(self) -> None:
+        sizes = self.header_splitter.sizes()
+        if len(sizes) != 3 or not all(sizes):
+            return
+        ref, graph, msg = sizes
+        self.view.set_column_widths(
+            ref=ref,
+            graph=graph,
+            msg=msg,
+            graph_manual=False,
+        )

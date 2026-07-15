@@ -6,7 +6,7 @@ backend et renvoie la sortie avec append_output().
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QSize, Signal
 from PySide6.QtWidgets import (
     QDockWidget,
     QHBoxLayout,
@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from gitkrakit.core import split_command
+from gitkrakit.ui.icons import app_icon
 
 
 class TerminalDock(QDockWidget):
@@ -31,6 +32,7 @@ class TerminalDock(QDockWidget):
         layout = QVBoxLayout(dock_widget)
 
         self.terminal_output = QPlainTextEdit()
+        self.terminal_output.setObjectName("terminalOutput")
         self.terminal_output.setReadOnly(True)
         self.terminal_output.setMinimumHeight(70)
         self.terminal_output.setMaximumHeight(130)
@@ -41,6 +43,7 @@ class TerminalDock(QDockWidget):
 
         input_row = QHBoxLayout()
         self.terminal_input = QLineEdit()
+        self.terminal_input.setObjectName("terminalInput")
         self.terminal_input.setPlaceholderText(
             'ex: status, log --oneline -5, commit -m "mon message"'
         )
@@ -49,18 +52,24 @@ class TerminalDock(QDockWidget):
         self.terminal_input.returnPressed.connect(self._submit)
         input_row.addWidget(QLabel("git"))
         input_row.addWidget(self.terminal_input)
-        run_btn = QPushButton("Exécuter")
-        run_btn.setToolTip("Exécuter la sous-commande Git (Entrée)")
-        run_btn.clicked.connect(self._submit)
-        input_row.addWidget(run_btn)
+        self.run_btn = QPushButton(app_icon("run"), "Exécuter")
+        self.run_btn.setIconSize(QSize(18, 18))
+        self.run_btn.setToolTip("Exécuter la sous-commande Git (Entrée)")
+        self.run_btn.clicked.connect(self._submit)
+        input_row.addWidget(self.run_btn)
 
-        clear_btn = QPushButton("Effacer")
-        clear_btn.setToolTip("Effacer l'historique du terminal")
-        clear_btn.clicked.connect(self.terminal_output.clear)
-        input_row.addWidget(clear_btn)
+        self.clear_btn = QPushButton(app_icon("clear"), "Effacer")
+        self.clear_btn.setIconSize(QSize(18, 18))
+        self.clear_btn.setToolTip("Effacer l'historique du terminal")
+        self.clear_btn.clicked.connect(self.terminal_output.clear)
+        input_row.addWidget(self.clear_btn)
         layout.addLayout(input_row)
 
         self.setWidget(dock_widget)
+
+    def apply_theme(self) -> None:
+        self.run_btn.setIcon(app_icon("run"))
+        self.clear_btn.setIcon(app_icon("clear"))
 
     def append_output(self, text: str) -> None:
         self.terminal_output.appendPlainText(text)

@@ -17,6 +17,7 @@ complet de GitKraken (voir "Limites" plus bas).
 - Diff côte à côte par fichier avec coloration syntaxique
 - Git Flow : initialisation, feature, release et hotfix
 - Génération de messages Conventional Commits via ACP avec Codex CLI ou Claude Code
+- Mise à jour automatique signée, téléchargée en arrière-plan depuis GitHub Releases
 - Mini-terminal git intégré avec arguments entre guillemets
 - Espaces de travail : groupes nommés de dépôts + dépôts récents, persistés
   dans `~/.gitkrakit/workspaces.json`
@@ -69,6 +70,61 @@ python main.py                      # puis Fichier > Ouvrir un dépôt
 python main.py /chemin/vers/un/repo # ouvre directement ce dépôt
 ```
 
+## Mises à jour et publications Windows
+
+L'installateur place GitKrakit dans
+`%LOCALAPPDATA%\Robnelito\GitKrakit`. Ce dossier appartient à l'utilisateur :
+PyUpdater peut donc remplacer l'exécutable et le relancer sans élévation UAC.
+Au démarrage, l'application installée vérifie silencieusement la présence d'une
+version plus récente. Une bannière non modale permet de lancer ou reporter le
+téléchargement ; le paquet et son manifeste sont vérifiés avec la clé publique
+Ed25519 présente dans `gitkrakit/client_config.py` avant le redémarrage.
+
+PyUpdater 4.0 nécessite l'environnement de build Python 3.11 défini dans le
+workflow. Le développement courant de l'application n'a pas besoin d'installer
+PyUpdater ; les outils de publication sont disponibles via l'extra `release`.
+
+### Configuration unique du secret de signature
+
+La clé privée n'est jamais versionnée. Le keypack créé hors ligne doit être
+conservé dans un emplacement sûr, puis ajouté au dépôt GitHub comme secret
+`PYUPDATER_KEYPACK_B64`. Depuis PowerShell, à partir de la copie sécurisée :
+
+```powershell
+$keypack = [Convert]::ToBase64String(
+    [IO.File]::ReadAllBytes('C:\chemin\securise\keypack.pyu')
+)
+$keypack | gh secret set PYUPDATER_KEYPACK_B64 --repo Robnelito/GitKrakit
+Remove-Variable keypack
+```
+
+Ne jamais afficher cette valeur, la placer dans un artefact Actions, ni ajouter
+`keypack.pyu` ou `.pyupdater/` au dépôt.
+
+### Couper une version
+
+1. Ouvrir **Actions → Release GitKrakit update → Run workflow**, puis conserver
+   la branche `main`. Le workflow refuse explicitement toute autre branche.
+2. Saisir la nouvelle version au format `MAJOR.MINOR.PATCH`, par exemple
+   `1.0.1`.
+3. Le workflow met à jour `gitkrakit.__version__`, exécute les tests, crée le
+   commit de version, lance `pyupdater build`, signe via
+   `pyupdater pkg --process --sign`, construit l'installateur puis publie les
+   fichiers sur la release fixe `latest-updates`.
+
+Le workflow vérifie également qu'un manifeste valide est accepté, puis qu'un
+manifeste modifié et une clé de signature différente sont tous deux rejetés.
+Le petit shim dans `scripts/pyupdater_compat/` corrige uniquement l'analyse des
+noms d'archives de PyUpdater 4 avec les versions modernes de `packaging` ; il
+n'est pas chargé par l'application.
+
+La première publication doit être installée avec
+`GitKrakit-Setup-<version>.exe`. Les versions suivantes sont distribuées par
+l'application. La signature PyUpdater protège les charges de mise à jour ; elle
+ne remplace pas une signature Windows Authenticode. Tant qu'aucun certificat
+Authenticode n'est configuré, SmartScreen peut donc avertir lors du premier
+lancement de l'installateur ou de l'exécutable.
+
 ## Structure du projet
 
 ```
@@ -95,6 +151,9 @@ GitKrakit/
 │           ├── diff_panel.py      # diff côte à côte
 │           └── terminal_dock.py   # mini-terminal git
 ├── tests/                         # tests du cœur sans interface graphique
+├── installer/GitKrakit.iss        # installateur Windows par utilisateur
+├── scripts/set_version.py         # mise à jour de la version source
+├── win.spec                       # build PyUpdater/PyInstaller Windows
 ├── pyproject.toml                 # packaging et configuration de test
 └── requirements.txt
 ```

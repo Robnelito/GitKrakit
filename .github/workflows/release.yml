@@ -1,0 +1,159 @@
+name: Release GitKrakit update
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version (MAJOR.MINOR.PATCH)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gitkrakit-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Require the main branch
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -ne 'refs/heads/main') {
+            throw "Release workflow must run from main, not $env:GITHUB_REF_NAME."
+          }
+
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up compatible Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install application and release tools
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,release]"
+
+      - name: Bump single-source version
+        shell: pwsh
+        run: python scripts/set_version.py "${{ inputs.version }}"
+
+      - name: Run tests
+        shell: pwsh
+        run: python -m unittest discover -s tests -v
+
+      - name: Commit version bump
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add gitkrakit/__init__.py
+          git diff --cached --quiet
+          if ($LASTEXITCODE -ne 0) {
+            git commit -m "chore(release): v${{ inputs.version }}"
+            git push origin "HEAD:$env:GITHUB_REF_NAME"
+          }
+
+      - name: Initialize PyUpdater repository
+        shell: pwsh
+        run: |
+          @(
+            'GitKrakit',
+            'y',
+            'Robnelito',
+            'y',
+            'https://github.com/Robnelito/GitKrakit/releases/download/latest-updates/',
+            'y',
+            'n',
+            'y',
+            'gitkrakit',
+            'y'
+          ) | pyupdater init
+
+      - name: Import signing key
+        shell: pwsh
+        env:
+          PYUPDATER_KEYPACK_B64: ${{ secrets.PYUPDATER_KEYPACK_B64 }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:PYUPDATER_KEYPACK_B64)) {
+            throw 'Repository secret PYUPDATER_KEYPACK_B64 is required.'
+          }
+          [IO.File]::WriteAllBytes(
+            'keypack.pyu',
+            [Convert]::FromBase64String($env:PYUPDATER_KEYPACK_B64)
+          )
+          try {
+            pyupdater keys --import
+          }
+          finally {
+            Remove-Item -LiteralPath keypack.pyu -Force -ErrorAction SilentlyContinue
+          }
+          git diff --exit-code -- gitkrakit/client_config.py
+
+      - name: Build and sign update payload
+        shell: pwsh
+        run: |
+          pyupdater build --clean --keep --pyinstaller-log-info `
+            --app-version="${{ inputs.version }}" win.spec
+          $env:PYTHONPATH = Join-Path $PWD 'scripts\pyupdater_compat'
+          pyupdater pkg --process --sign
+
+      - name: Verify signatures and tamper rejection
+        shell: pwsh
+        run: python scripts/verify_signed_update.py
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Build per-user installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          & $iscc "/DAppVersion=${{ inputs.version }}" installer\GitKrakit.iss
+
+      - name: Publish stable update assets
+        shell: pwsh
+        run: |
+          gh release view latest-updates --repo $env:GITHUB_REPOSITORY 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create latest-updates `
+              --repo $env:GITHUB_REPOSITORY `
+              --target $env:GITHUB_REF_NAME `
+              --title "GitKrakit automatic updates" `
+              --notes "Stable assets consumed by the in-app updater."
+          }
+          gh release edit latest-updates `
+            --repo $env:GITHUB_REPOSITORY `
+            --title "GitKrakit ${{ inputs.version }}" `
+            --notes "Signed automatic-update payload and per-user installer for GitKrakit ${{ inputs.version }}." `
+            --latest
+          Get-ChildItem pyu-data\deploy -File | ForEach-Object {
+            gh release upload latest-updates $_.FullName `
+              --repo $env:GITHUB_REPOSITORY --clobber
+          }
+          Get-ChildItem dist\installer\*.exe -File | ForEach-Object {
+            gh release upload latest-updates $_.FullName `
+              --repo $env:GITHUB_REPOSITORY --clobber
+          }
+
+      - name: Preserve release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: GitKrakit-${{ inputs.version }}
+          path: |
+            pyu-data/deploy/*
+            dist/installer/*.exe
+          if-no-files-found: error

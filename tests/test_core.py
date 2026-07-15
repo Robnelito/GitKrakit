@@ -7,6 +7,7 @@ from pathlib import Path
 
 from git import Repo
 
+from gitkrakit import theme
 from gitkrakit.core import CommitInfo, GitBackend, GraphLayout, parse_unified_diff, split_command
 from gitkrakit.core.acp_commit import (
     AcpCommitError,
@@ -76,6 +77,15 @@ class GraphLayoutTests(unittest.TestCase):
         layout = GraphLayout(commits)
         self.assertEqual(len(layout.nodes[0].parent_lanes), 2)
         self.assertGreaterEqual(layout.lane_count, 2)
+
+
+class ThemeTests(unittest.TestCase):
+    def test_resolves_explicit_and_system_modes(self) -> None:
+        self.assertEqual(theme.resolve_theme_mode(theme.THEME_LIGHT, True), theme.THEME_LIGHT)
+        self.assertEqual(theme.resolve_theme_mode(theme.THEME_DARK, False), theme.THEME_DARK)
+        self.assertEqual(theme.resolve_theme_mode(theme.THEME_SYSTEM, True), theme.THEME_DARK)
+        self.assertEqual(theme.resolve_theme_mode(theme.THEME_SYSTEM, False), theme.THEME_LIGHT)
+        self.assertEqual(theme.resolve_theme_mode("invalid", False), theme.THEME_LIGHT)
 
 
 class WorkspaceManagerTests(unittest.TestCase):

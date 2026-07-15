@@ -13,13 +13,15 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
-from gitkrakit.theme import DARK_STYLESHEET
+from gitkrakit import theme
 from gitkrakit.ui import MainWindow
 
 
 def main() -> int:
     app = QApplication(sys.argv)
-    app.setStyleSheet(DARK_STYLESHEET)
+    app.setOrganizationName("GitKrakit")
+    app.setApplicationName("GitKrakit")
+    theme.apply_theme(app, theme.saved_theme_mode())
 
     window = MainWindow()
 
@@ -27,6 +29,7 @@ def main() -> int:
         window.open_repo(sys.argv[1])
 
     window.show()
+    window.start_update_check()
     return app.exec()
 
 
