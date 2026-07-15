@@ -9,6 +9,8 @@ import shutil
 from dataclasses import dataclass
 from typing import Any
 
+from gitkrakit import __version__
+
 
 MAX_DIFF_CHARS = 200_000
 ACP_TIMEOUT_SECONDS = 180
@@ -205,7 +207,7 @@ async def _generate_async(provider: AcpProvider, prompt: str, cwd: str) -> str:
             client_info=Implementation(
                 name="gitkrakit",
                 title="GitKrakit",
-                version="0.1.0",
+                version=__version__,
             ),
         )
         session = await connection.new_session(cwd=cwd, mcp_servers=[])
