@@ -78,6 +78,7 @@ class StagingPanel(QWidget):
 
         layout.addWidget(QLabel("MESSAGE DU COMMIT"))
         self.commit_message_edit = QPlainTextEdit()
+        self.commit_message_edit.setObjectName("commitMessageEdit")
         self.commit_message_edit.setPlaceholderText("Résume clairement la modification…")
         self.commit_message_edit.setAccessibleName("Message du commit")
         self.commit_message_edit.setTabChangesFocus(True)
@@ -108,6 +109,12 @@ class StagingPanel(QWidget):
         self.commit_btn.clicked.connect(self._emit_commit)
         layout.addWidget(self.commit_btn)
         self._update_buttons()
+
+    def apply_theme(self) -> None:
+        for list_widget in (self.unstaged_list, self.staged_list):
+            for index in range(list_widget.count()):
+                item = list_widget.item(index)
+                item.setIcon(status_icon(item.toolTip()))
 
     def update_status(self, staged: list[FileStatus], unstaged: list[FileStatus]) -> None:
         self._staged_count = len(staged)

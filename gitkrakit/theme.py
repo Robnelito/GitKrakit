@@ -5,47 +5,135 @@ tous les widgets (fenêtre, graphe, panneaux) partagent la même palette.
 """
 from __future__ import annotations
 
-# Palette sombre (inspirée de GitHub Dark)
-BACKGROUND = "#0d1117"
-PANEL_BG = "#161b22"
-SURFACE = "#21262d"
-BORDER = "#30363d"
-TEXT = "#c9d1d9"
-TEXT_MUTED = "#8b949e"
-HIGHLIGHT = "#ffffff"
-ACCENT = "#58a6ff"
-ACCENT_DIM = "#1f6feb"
-ACCENT_SOFT = "#172b42"
+from PySide6.QtCore import QSettings, Qt
+from PySide6.QtGui import QFont, QFontDatabase, QPalette
 
-# Couleur du texte des fichiers selon leur état (panneau de staging)
-STATUS_COLORS = {
-    "modified": "#e3b341",
-    "added": "#3fb950",
-    "deleted": "#f85149",
-    "renamed": "#58a6ff",
-    "copied": "#58a6ff",
-    "untracked": "#8b949e",
-    "conflict": "#f0883e",
-    "typechange": "#e3b341",
+THEME_SYSTEM = "system"
+THEME_LIGHT = "light"
+THEME_DARK = "dark"
+THEME_MODES = (THEME_SYSTEM, THEME_LIGHT, THEME_DARK)
+
+UI_FONT_FAMILY = "Segoe UI"
+MONO_FONT_FAMILY = "Consolas"
+
+
+def configure_fonts(app) -> None:
+    """Select modern installed fonts while retaining cross-platform fallbacks."""
+    global UI_FONT_FAMILY, MONO_FONT_FAMILY
+    available = set(QFontDatabase.families())
+
+    ui_candidates = (
+        "Segoe UI Variable Text",
+        "Inter",
+        "Segoe UI",
+        "SF Pro Text",
+        "Noto Sans",
+        "Ubuntu",
+    )
+    mono_candidates = (
+        "Cascadia Mono",
+        "Cascadia Code",
+        "JetBrains Mono",
+        "Consolas",
+        "DejaVu Sans Mono",
+    )
+    UI_FONT_FAMILY = next(
+        (family for family in ui_candidates if family in available),
+        app.font().family(),
+    )
+    MONO_FONT_FAMILY = next(
+        (family for family in mono_candidates if family in available),
+        "monospace",
+    )
+
+    ui_font = QFont(UI_FONT_FAMILY)
+    ui_font.setPointSizeF(10.0)
+    ui_font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
+    ui_font.setHintingPreference(QFont.HintingPreference.PreferVerticalHinting)
+    app.setFont(ui_font)
+
+_DARK = {
+    "colors": (
+        "#0d1117", "#161b22", "#21262d", "#30363d", "#c9d1d9",
+        "#8b949e", "#ffffff", "#58a6ff", "#1f6feb", "#172b42",
+    ),
+    "status": {
+        "modified": "#e3b341", "added": "#3fb950", "deleted": "#f85149",
+        "renamed": "#58a6ff", "copied": "#58a6ff", "untracked": "#8b949e",
+        "conflict": "#f0883e", "typechange": "#e3b341",
+    },
+    "lanes": ["#3fb950", "#58a6ff", "#f0883e", "#db61a2", "#a371f7", "#e3b341", "#39c5cf", "#f85149"],
 }
 
-# Palette de couleurs cycliques pour les lanes du graphe (façon GitKraken)
-LANE_COLORS = [
-    "#3fb950",  # vert
-    "#58a6ff",  # bleu
-    "#f0883e",  # orange
-    "#db61a2",  # rose
-    "#a371f7",  # violet
-    "#e3b341",  # jaune
-    "#39c5cf",  # cyan
-    "#f85149",  # rouge
-]
+_LIGHT = {
+    "colors": (
+        "#f6f8fa", "#ffffff", "#f0f3f6", "#d0d7de", "#24292f",
+        "#57606a", "#ffffff", "#0969da", "#0550ae", "#ddf4ff",
+    ),
+    "status": {
+        "modified": "#9a6700", "added": "#1a7f37", "deleted": "#cf222e",
+        "renamed": "#0969da", "copied": "#0969da", "untracked": "#57606a",
+        "conflict": "#bc4c00", "typechange": "#9a6700",
+    },
+    "lanes": ["#1a7f37", "#0969da", "#bc4c00", "#bf3989", "#8250df", "#9a6700", "#1b7c83", "#cf222e"],
+}
 
-DARK_STYLESHEET = f"""
+STATUS_COLORS: dict[str, str] = {}
+LANE_COLORS: list[str] = []
+CURRENT_EFFECTIVE_MODE = THEME_DARK
+
+
+def _set_palette(palette: dict, effective_mode: str) -> None:
+    global BACKGROUND, PANEL_BG, SURFACE, BORDER, TEXT, TEXT_MUTED
+    global HIGHLIGHT, ACCENT, ACCENT_DIM, ACCENT_SOFT, CURRENT_EFFECTIVE_MODE
+    (
+        BACKGROUND, PANEL_BG, SURFACE, BORDER, TEXT, TEXT_MUTED,
+        HIGHLIGHT, ACCENT, ACCENT_DIM, ACCENT_SOFT,
+    ) = palette["colors"]
+    STATUS_COLORS.clear()
+    STATUS_COLORS.update(palette["status"])
+    LANE_COLORS[:] = palette["lanes"]
+    CURRENT_EFFECTIVE_MODE = effective_mode
+
+
+_set_palette(_DARK, THEME_DARK)
+
+
+def saved_theme_mode() -> str:
+    mode = str(QSettings("GitKrakit", "GitKrakit").value("appearance/theme", THEME_SYSTEM))
+    return mode if mode in THEME_MODES else THEME_SYSTEM
+
+
+def save_theme_mode(mode: str) -> None:
+    if mode in THEME_MODES:
+        QSettings("GitKrakit", "GitKrakit").setValue("appearance/theme", mode)
+
+
+def system_uses_dark_mode(app) -> bool:
+    try:
+        scheme = app.styleHints().colorScheme()
+        if scheme == Qt.ColorScheme.Dark:
+            return True
+        if scheme == Qt.ColorScheme.Light:
+            return False
+    except (AttributeError, RuntimeError):
+        pass
+    return app.palette().color(QPalette.Window).lightness() < 128
+
+
+def resolve_theme_mode(mode: str, system_dark: bool) -> str:
+    requested = mode if mode in THEME_MODES else THEME_SYSTEM
+    if requested == THEME_SYSTEM:
+        return THEME_DARK if system_dark else THEME_LIGHT
+    return requested
+
+
+def build_stylesheet() -> str:
+    return f"""
 QWidget {{
     background-color: {BACKGROUND};
     color: {TEXT};
-    font-family: "Segoe UI", sans-serif;
+    font-family: "{UI_FONT_FAMILY}", sans-serif;
     font-size: 10pt;
 }}
 
@@ -65,7 +153,7 @@ QListWidget::item:hover, QTreeWidget::item:hover {{
     background-color: {SURFACE};
 }}
 QListWidget::item:selected, QTreeWidget::item:selected {{
-    background-color: rgba(31, 111, 235, 0.45);
+    background-color: {ACCENT_DIM};
     color: {HIGHLIGHT};
 }}
 
@@ -90,7 +178,7 @@ QTreeWidget#sidebarTree::item:hover {{
 }}
 QTreeWidget#sidebarTree::item:selected {{
     background-color: {ACCENT_SOFT};
-    color: {HIGHLIGHT};
+    color: {TEXT};
 }}
 QWidget#sidebarGroupHeader {{
     background-color: {PANEL_BG};
@@ -101,7 +189,7 @@ QLineEdit#sidebarFilter {{
     border: 1px solid transparent;
     border-radius: 8px;
     padding: 7px 10px;
-    font-family: "Segoe UI", sans-serif;
+    font-family: "{UI_FONT_FAMILY}", sans-serif;
 }}
 QLineEdit#sidebarFilter:hover {{
     border-color: {BORDER};
@@ -117,7 +205,7 @@ QTextEdit, QPlainTextEdit {{
     border: 1px solid {BORDER};
     border-radius: 6px;
     padding: 5px;
-    font-family: Consolas, "Courier New", monospace;
+    font-family: "{MONO_FONT_FAMILY}", monospace;
 }}
 QTextEdit:focus, QPlainTextEdit:focus {{
     border-color: {ACCENT};
@@ -127,7 +215,7 @@ QLineEdit {{
     border: 1px solid {BORDER};
     border-radius: 6px;
     padding: 4px 8px;
-    font-family: Consolas, "Courier New", monospace;
+    font-family: "{UI_FONT_FAMILY}", sans-serif;
 }}
 QLineEdit:focus {{
     border: 1px solid {ACCENT};
@@ -207,6 +295,12 @@ QToolBar::separator {{
     width: 1px;
     margin: 4px 6px;
 }}
+QPlainTextEdit#commitMessageEdit {{
+    font-family: "{UI_FONT_FAMILY}", sans-serif;
+}}
+QPlainTextEdit#terminalOutput, QLineEdit#terminalInput {{
+    font-family: "{MONO_FONT_FAMILY}", monospace;
+}}
 
 /* ---- barre d'actions principale ---- */
 QToolBar#mainToolbar {{
@@ -237,18 +331,18 @@ QToolBar#mainToolbar QToolButton {{
     font-weight: 500;
 }}
 QToolBar#mainToolbar QToolButton:hover {{
-    color: {HIGHLIGHT};
+    color: {TEXT};
     background-color: {SURFACE};
     border-color: transparent;
 }}
 QToolBar#mainToolbar QToolButton:pressed,
 QToolBar#mainToolbar QToolButton:checked {{
-    color: {HIGHLIGHT};
+    color: {TEXT};
     background-color: {ACCENT_SOFT};
     border-color: {ACCENT_DIM};
 }}
 QToolBar#mainToolbar QToolButton:disabled {{
-    color: #59636e;
+    color: {TEXT_MUTED};
     background-color: transparent;
     border-color: transparent;
 }}
@@ -260,7 +354,7 @@ QToolBar#mainToolbar QToolButton#toolbarPrimaryButton {{
     padding-right: 11px;
 }}
 QToolBar#mainToolbar QToolButton#toolbarPrimaryButton:hover {{
-    color: {HIGHLIGHT};
+    color: {TEXT};
     border-color: {TEXT_MUTED};
 }}
 QToolBar#mainToolbar QToolButton#toolbarUtilityButton {{
@@ -295,8 +389,44 @@ QTabBar::tab:hover {{
     color: {TEXT};
 }}
 QTabBar::tab:selected {{
-    color: {HIGHLIGHT};
+    color: {TEXT};
     border-bottom: 2px solid {ACCENT};
+}}
+
+/* ---- onglets de l'inspecteur droit ---- */
+QTabWidget#inspectorTabs::pane {{
+    background-color: {BACKGROUND};
+    border: none;
+    border-top: 1px solid {BORDER};
+    top: 0;
+}}
+QTabBar#inspectorTabBar {{
+    background-color: {PANEL_BG};
+}}
+QTabBar#inspectorTabBar::tab {{
+    color: {TEXT_MUTED};
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    margin: 6px 3px;
+    padding: 7px 12px;
+    font-size: 9pt;
+    font-weight: 500;
+}}
+QTabBar#inspectorTabBar::tab:first {{
+    margin-left: 6px;
+}}
+QTabBar#inspectorTabBar::tab:last {{
+    margin-right: 6px;
+}}
+QTabBar#inspectorTabBar::tab:hover {{
+    color: {TEXT};
+    background-color: {SURFACE};
+}}
+QTabBar#inspectorTabBar::tab:selected {{
+    color: {TEXT};
+    background-color: {ACCENT_SOFT};
+    border-color: {ACCENT_DIM};
 }}
 
 /* ---- menus ---- */
@@ -310,7 +440,7 @@ QMenuBar::item {{
 }}
 QMenuBar::item:selected, QMenu::item:selected {{
     background-color: {SURFACE};
-    color: {HIGHLIGHT};
+    color: {TEXT};
 }}
 QMenu {{
     background-color: {PANEL_BG};
@@ -410,3 +540,16 @@ QMessageBox, QInputDialog, QFileDialog {{
     background-color: {PANEL_BG};
 }}
 """
+
+
+def apply_theme(app, mode: str) -> str:
+    """Apply a requested mode and return the resolved light/dark mode."""
+    effective = resolve_theme_mode(mode, system_uses_dark_mode(app))
+    configure_fonts(app)
+    _set_palette(_DARK if effective == THEME_DARK else _LIGHT, effective)
+    app.setStyleSheet(build_stylesheet())
+    return effective
+
+
+# Backward-compatible startup constant for callers that still import it.
+DARK_STYLESHEET = build_stylesheet()

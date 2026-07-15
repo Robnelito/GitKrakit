@@ -31,6 +31,7 @@ class TerminalDock(QDockWidget):
         layout = QVBoxLayout(dock_widget)
 
         self.terminal_output = QPlainTextEdit()
+        self.terminal_output.setObjectName("terminalOutput")
         self.terminal_output.setReadOnly(True)
         self.terminal_output.setMinimumHeight(70)
         self.terminal_output.setMaximumHeight(130)
@@ -41,6 +42,7 @@ class TerminalDock(QDockWidget):
 
         input_row = QHBoxLayout()
         self.terminal_input = QLineEdit()
+        self.terminal_input.setObjectName("terminalInput")
         self.terminal_input.setPlaceholderText(
             'ex: status, log --oneline -5, commit -m "mon message"'
         )

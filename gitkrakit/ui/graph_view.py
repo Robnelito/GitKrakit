@@ -69,7 +69,7 @@ MIN_REF_COL_WIDTH = 70
 MIN_GRAPH_COL_WIDTH = 50
 MIN_MSG_COL_WIDTH = 150
 
-HANDLE_WIDTH = 1  # largeur des poignées de redimensionnement de l'en-tête
+HANDLE_WIDTH = 5  # cible confortable ; seule une ligne centrale reste visible
 SCROLLBAR_RESERVE = 10
 CHIP_PADDING = 6
 MAX_VISIBLE_REFS = 2  # au-delà : pastille "+N"
@@ -150,7 +150,7 @@ class CommitNodeItem(QGraphicsEllipseItem):
         super().mousePressEvent(event)
 
     def hoverEnterEvent(self, event):
-        self.setPen(QPen(QColor(theme.HIGHLIGHT), 2.2))
+        self.setPen(QPen(QColor(theme.ACCENT), 2.2))
         super().hoverEnterEvent(event)
 
     def hoverLeaveEvent(self, event):
@@ -190,8 +190,8 @@ class GraphView(QGraphicsView):
         self.col_msg = DEFAULT_MSG_COL_WIDTH
         self.graph_auto_size = True  # False dès que l'utilisateur redimensionne
 
-        self._ui_font = QFont("Segoe UI", 9)
-        self._chip_font = QFont("Segoe UI", 8)
+        self._ui_font = QFont(theme.UI_FONT_FAMILY, 9)
+        self._chip_font = QFont(theme.UI_FONT_FAMILY, 8)
 
     def set_column_widths(
         self,
@@ -240,6 +240,15 @@ class GraphView(QGraphicsView):
         if current is not None:
             current.update_state()
         self.commit_selected.emit(sha)
+
+    def apply_theme(self) -> None:
+        self._ui_font.setFamily(theme.UI_FONT_FAMILY)
+        self._chip_font.setFamily(theme.UI_FONT_FAMILY)
+        self.setBackgroundBrush(QBrush(QColor(theme.BACKGROUND)))
+        if self._graph_layout is not None:
+            for node in self._graph_layout.nodes:
+                node.color = theme.LANE_COLORS[node.lane % len(theme.LANE_COLORS)]
+        self._redraw()
 
     # ------------------------------------------------------------------
     def _redraw(self) -> None:
@@ -302,7 +311,7 @@ class GraphView(QGraphicsView):
             )
 
             date_text = f"{node.commit.date:%d/%m/%Y @ %H:%M}"
-            self._draw_text(date_text, self._ui_font, theme.TEXT_MUTED, date_x + 8, y_center)
+            self._draw_text(date_text, self._ui_font, theme.TEXT_MUTED, date_x + 10, y_center)
 
         total_height = len(layout.nodes) * ROW_HEIGHT + ROW_HEIGHT / 2
         self._content_width = total_width
@@ -384,8 +393,8 @@ class GraphView(QGraphicsView):
         refs = node.commit.refs
         if not refs:
             return
-        x = 8.0
-        right_edge = self.col_ref - 8
+        x = 10.0
+        right_edge = self.col_ref - 10
         drawn = 0
         for ref in refs[:MAX_VISIBLE_REFS]:
             remaining = len(refs) - drawn - 1
@@ -439,13 +448,20 @@ class GraphView(QGraphicsView):
         self._scene.addItem(item)
 
 
-def _col_label(text: str) -> QLabel:
-    label = QLabel(text.upper())
-    label.setStyleSheet(
-        f"color: {theme.TEXT_MUTED}; font-size: 8pt; font-weight: bold;"
-        "background: transparent; border: none; padding-left: 6px;"
-    )
+def _col_label(text: str, tooltip: str) -> QLabel:
+    label = QLabel(text)
+    label.setObjectName("commitHeaderLabel")
+    label.setToolTip(tooltip)
+    label.setAccessibleName(f"Colonne {text}")
+    _style_col_label(label)
     return label
+
+
+def _style_col_label(label: QLabel) -> None:
+    label.setStyleSheet(
+        f"color: {theme.TEXT_MUTED}; font-size: 8.5pt; font-weight: 600;"
+        "background: transparent; border: none; padding: 0 10px;"
+    )
 
 
 class GraphPanel(QWidget):
@@ -466,31 +482,46 @@ class GraphPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        header = QWidget()
-        header.setStyleSheet(
+        self._header = QWidget()
+        self._header.setObjectName("commitTableHeader")
+        self._header.setFixedHeight(34)
+        self._header.setStyleSheet(
             f"background-color: {theme.PANEL_BG}; border-bottom: 1px solid {theme.BORDER};"
         )
-        header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(0, 4, 0, 4)
+        header_layout = QHBoxLayout(self._header)
+        header_layout.setContentsMargins(0, 0, 0, 0)
         header_layout.setSpacing(0)
 
         self.header_splitter = QSplitter(Qt.Horizontal)
         self.header_splitter.setHandleWidth(HANDLE_WIDTH)
         self.header_splitter.setChildrenCollapsible(False)
         self.header_splitter.setStyleSheet(
-            f"QSplitter::handle {{ background-color: {theme.BORDER}; }}"
-            f"QSplitter::handle:hover {{ background-color: {theme.ACCENT}; }}"
+            "QSplitter::handle { background-color: transparent; "
+            f"border-left: 1px solid {theme.BORDER}; margin: 8px 2px; }}"
+            "QSplitter::handle:hover { background-color: transparent; "
+            f"border-left-color: {theme.ACCENT}; }}"
         )
 
-        self._ref_header = _col_label("Branche / Tag")
+        resize_hint = "Fais glisser le séparateur pour redimensionner la colonne."
+        self._ref_header = _col_label(
+            "Références",
+            f"Branches et tags pointant vers le commit. {resize_hint}",
+        )
         self._ref_header.setMinimumWidth(MIN_REF_COL_WIDTH)
         self.header_splitter.addWidget(self._ref_header)
 
-        self._graph_header = _col_label("Graphe")
+        self._graph_header = _col_label(
+            "Graphe",
+            f"Relations de parenté entre les commits. {resize_hint}",
+        )
+        self._graph_header.setAlignment(Qt.AlignCenter)
         self._graph_header.setMinimumWidth(MIN_GRAPH_COL_WIDTH)
         self.header_splitter.addWidget(self._graph_header)
 
-        self._msg_header = _col_label("Message de commit")
+        self._msg_header = _col_label(
+            "Message",
+            f"Message du commit. {resize_hint}",
+        )
         self._msg_header.setMinimumWidth(MIN_MSG_COL_WIDTH)
         self.header_splitter.addWidget(self._msg_header)
 
@@ -504,15 +535,15 @@ class GraphPanel(QWidget):
         self.header_splitter.splitterMoved.connect(self._on_splitter_moved)
         header_layout.addWidget(self.header_splitter, stretch=1)
 
-        date_header = _col_label("Date / Heure")
-        date_header.setFixedWidth(DATE_COL_WIDTH)
-        header_layout.addWidget(date_header)
+        self._date_header = _col_label("Date", "Date et heure du commit.")
+        self._date_header.setFixedWidth(DATE_COL_WIDTH)
+        header_layout.addWidget(self._date_header)
 
         scrollbar_gutter = QWidget()
         scrollbar_gutter.setFixedWidth(SCROLLBAR_RESERVE)
         header_layout.addWidget(scrollbar_gutter)
 
-        layout.addWidget(header)
+        layout.addWidget(self._header)
 
         self.view = GraphView()
         self.view.setFrameShape(QFrame.NoFrame)
@@ -535,6 +566,21 @@ class GraphPanel(QWidget):
         self._column_sync_timer.setSingleShot(True)
         self._column_sync_timer.setInterval(0)
         self._column_sync_timer.timeout.connect(self._sync_view_columns)
+
+    def apply_theme(self) -> None:
+        self._header.setStyleSheet(
+            f"background-color: {theme.PANEL_BG}; border-bottom: 1px solid {theme.BORDER};"
+        )
+        for label in (self._ref_header, self._graph_header, self._msg_header, self._date_header):
+            _style_col_label(label)
+        self.header_splitter.setStyleSheet(
+            "QSplitter::handle { background-color: transparent; "
+            f"border-left: 1px solid {theme.BORDER}; margin: 8px 2px; }}"
+            "QSplitter::handle:hover { background-color: transparent; "
+            f"border-left-color: {theme.ACCENT}; }}"
+        )
+        self.empty_label.setStyleSheet(f"color: {theme.TEXT_MUTED}; padding: 32px;")
+        self.view.apply_theme()
 
     def set_commits(self, commits) -> None:
         self.view.set_commits(commits)

@@ -131,18 +131,29 @@ def _group_header(text: str, accent: str) -> QWidget:
     layout.setSpacing(8)
 
     dot = QLabel()
+    dot.setObjectName("sidebarAccentDot")
     dot.setFixedSize(5, 5)
     dot.setStyleSheet(f"background-color: {accent}; border-radius: 2px;")
     layout.addWidget(dot, alignment=Qt.AlignVCenter)
 
     label = QLabel(text)
-    font = QFont("Segoe UI", 9)
+    label.setObjectName("sidebarGroupTitle")
+    font = QFont(theme.UI_FONT_FAMILY, 9)
     font.setWeight(QFont.DemiBold)
     label.setFont(font)
     label.setStyleSheet(f"color: {theme.TEXT}; background: transparent;")
     layout.addWidget(label)
     layout.addStretch(1)
     return header
+
+
+def _style_group_header(header: QWidget, accent: str) -> None:
+    dot = header.findChild(QLabel, "sidebarAccentDot")
+    label = header.findChild(QLabel, "sidebarGroupTitle")
+    if dot is not None:
+        dot.setStyleSheet(f"background-color: {accent}; border-radius: 2px;")
+    if label is not None:
+        label.setStyleSheet(f"color: {theme.TEXT}; background: transparent;")
 
 
 class SidebarPanel(QWidget):
@@ -188,7 +199,8 @@ class SidebarPanel(QWidget):
         repos_layout = QVBoxLayout(repos_widget)
         repos_layout.setContentsMargins(0, 0, 0, 0)
         repos_layout.setSpacing(0)
-        repos_layout.addWidget(_group_header("Dépôts", theme.ACCENT))
+        self._repos_header = _group_header("Dépôts", theme.ACCENT)
+        repos_layout.addWidget(self._repos_header)
         self.repos_tree = _make_tree()
         self.repos_tree.setAccessibleName("Dépôts et espaces de travail")
         self.repos_tree.setToolTip("Double-clique un dépôt pour l'ouvrir")
@@ -204,7 +216,8 @@ class SidebarPanel(QWidget):
         refs_layout = QVBoxLayout(refs_widget)
         refs_layout.setContentsMargins(0, 0, 0, 0)
         refs_layout.setSpacing(0)
-        refs_layout.addWidget(_group_header("Branches et tags", theme.LANE_COLORS[0]))
+        self._refs_header = _group_header("Branches et tags", theme.LANE_COLORS[0])
+        refs_layout.addWidget(self._refs_header)
         self.refs_tree = _make_tree()
         self.refs_tree.setAccessibleName("Branches, tags et Git Flow")
         self.refs_tree.setToolTip("Double-clique une branche locale pour l'extraire")
@@ -215,16 +228,27 @@ class SidebarPanel(QWidget):
         )
         refs_layout.addWidget(self.refs_tree)
 
-        splitter = QSplitter(Qt.Vertical)
-        splitter.addWidget(repos_widget)
-        splitter.addWidget(refs_widget)
-        splitter.setChildrenCollapsible(False)
-        splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
-        splitter.setSizes([180, 420])
-        splitter.setStyleSheet(f"QSplitter::handle {{ background-color: {theme.BORDER}; }}")
-        layout.addWidget(splitter, stretch=1)
+        self._splitter = QSplitter(Qt.Vertical)
+        self._splitter.addWidget(repos_widget)
+        self._splitter.addWidget(refs_widget)
+        self._splitter.setChildrenCollapsible(False)
+        self._splitter.setStretchFactor(0, 0)
+        self._splitter.setStretchFactor(1, 1)
+        self._splitter.setSizes([180, 420])
+        self._splitter.setStyleSheet(
+            f"QSplitter::handle {{ background-color: {theme.BORDER}; }}"
+        )
+        layout.addWidget(self._splitter, stretch=1)
 
+        self.refresh()
+
+    def apply_theme(self) -> None:
+        _sidebar_icon.cache_clear()
+        _style_group_header(self._repos_header, theme.ACCENT)
+        _style_group_header(self._refs_header, theme.LANE_COLORS[0])
+        self._splitter.setStyleSheet(
+            f"QSplitter::handle {{ background-color: {theme.BORDER}; }}"
+        )
         self.refresh()
 
     # ------------------------------------------------------------------
@@ -490,7 +514,7 @@ class SidebarPanel(QWidget):
     @staticmethod
     def _add_section(tree: QTreeWidget, title: str, count: int) -> QTreeWidgetItem:
         item = QTreeWidgetItem([title, str(count) if count else ""])
-        font = QFont("Segoe UI", 8)
+        font = QFont(theme.UI_FONT_FAMILY, 8)
         font.setWeight(QFont.DemiBold)
         item.setFont(0, font)
         item.setForeground(0, QBrush(QColor(theme.TEXT_MUTED)))

@@ -52,7 +52,7 @@ def status_icon(status: str) -> QIcon:
     painter.setPen(color)
     painter.drawRoundedRect(QRectF(0.5, 0.5, _SIZE - 1, _SIZE - 1), 4, 4)
 
-    font = QFont("Segoe UI", 8)
+    font = QFont(theme.UI_FONT_FAMILY, 8)
     font.setBold(True)
     painter.setFont(font)
     painter.drawText(pixmap.rect(), Qt.AlignCenter, _LETTERS.get(status, "?"))
@@ -167,6 +167,37 @@ def _draw_refresh(painter: QPainter, color: str) -> None:
     _arrowhead(painter, QPointF(13.2, 5.4), color, pointing_down=True)
 
 
+def _draw_system(painter: QPainter, color: str) -> None:
+    painter.setPen(_pen(color))
+    painter.setBrush(Qt.NoBrush)
+    painter.drawRoundedRect(QRectF(2.5, 3, 13, 9), 1.5, 1.5)
+    painter.drawLine(QPointF(7, 15), QPointF(11, 15))
+    painter.drawLine(QPointF(9, 12), QPointF(9, 15))
+
+
+def _draw_light(painter: QPainter, color: str) -> None:
+    painter.setPen(_pen(color, 1.5))
+    painter.setBrush(Qt.NoBrush)
+    painter.drawEllipse(QPointF(9, 9), 3.2, 3.2)
+    for start, end in (
+        ((9, 1.5), (9, 3.3)), ((9, 14.7), (9, 16.5)),
+        ((1.5, 9), (3.3, 9)), ((14.7, 9), (16.5, 9)),
+        ((3.7, 3.7), (5, 5)), ((13, 13), (14.3, 14.3)),
+        ((13, 5), (14.3, 3.7)), ((3.7, 14.3), (5, 13)),
+    ):
+        painter.drawLine(QPointF(*start), QPointF(*end))
+
+
+def _draw_dark(painter: QPainter, color: str) -> None:
+    painter.setPen(_pen(color))
+    painter.setBrush(Qt.NoBrush)
+    path = QPainterPath(QPointF(12.8, 3.2))
+    path.cubicTo(QPointF(7.2, 3.5), QPointF(5.4, 10), QPointF(10.2, 13.4))
+    path.cubicTo(QPointF(6, 14.2), QPointF(2.8, 11.1), QPointF(3.1, 7.2))
+    path.cubicTo(QPointF(3.4, 3.5), QPointF(7.5, 1), QPointF(12.8, 3.2))
+    painter.drawPath(path)
+
+
 _TB_DRAWERS = {
     "open": _draw_open,
     "back": _draw_back,
@@ -178,12 +209,16 @@ _TB_DRAWERS = {
     "stash": _draw_stash,
     "pop": _draw_pop,
     "refresh": _draw_refresh,
+    "system": _draw_system,
+    "light": _draw_light,
+    "dark": _draw_dark,
 }
 
 
 @lru_cache(maxsize=None)
-def toolbar_icon(name: str, color: str = theme.TEXT) -> QIcon:
+def toolbar_icon(name: str, color: str | None = None) -> QIcon:
     """Icône de la barre d'outils, dessinée à la volée et mise en cache."""
+    color = color or theme.TEXT
     drawer = _TB_DRAWERS[name]
     pixmap = QPixmap(_TB_SIZE, _TB_SIZE)
     pixmap.fill(Qt.transparent)
@@ -192,3 +227,9 @@ def toolbar_icon(name: str, color: str = theme.TEXT) -> QIcon:
     drawer(painter, color)
     painter.end()
     return QIcon(pixmap)
+
+
+def clear_icon_caches() -> None:
+    """Regenerate palette-dependent icons after a live theme change."""
+    status_icon.cache_clear()
+    toolbar_icon.cache_clear()

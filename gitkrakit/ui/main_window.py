@@ -12,8 +12,9 @@ from collections.abc import Callable
 from typing import Any
 
 from PySide6.QtCore import Qt, QEvent, QSize, QThread, QTimer
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QActionGroup
 from PySide6.QtWidgets import (
+    QApplication,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -86,6 +87,10 @@ class MainWindow(QMainWindow):
         self.workspace_manager = WorkspaceManager()
         self._commits_by_sha: dict[str, CommitInfo] = {}
         self._last_refresh = 0.0
+        self._theme_mode = theme.saved_theme_mode()
+        app = QApplication.instance()
+        if app is not None:
+            theme.apply_theme(app, self._theme_mode)
 
         self._build_toolbar()
         self._build_central_widget()
@@ -97,6 +102,13 @@ class MainWindow(QMainWindow):
         self._auto_fetch_timer.setInterval(AUTO_FETCH_INTERVAL_MS)
         self._auto_fetch_timer.timeout.connect(self._auto_fetch)
         self._auto_fetch_timer.start()
+
+        try:
+            QApplication.instance().styleHints().colorSchemeChanged.connect(
+                self._on_system_color_scheme_changed
+            )
+        except AttributeError:
+            pass
 
         self._update_action_state()
         self.statusBar().showMessage("Ouvre un dépôt pour commencer")
@@ -206,6 +218,37 @@ class MainWindow(QMainWindow):
         stretch.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         toolbar.addWidget(stretch)
 
+        self._appearance_menu = QMenu("Apparence", self)
+        appearance_group = QActionGroup(self)
+        appearance_group.setExclusive(True)
+        self._appearance_actions: dict[str, QAction] = {}
+        for mode, label in (
+            (theme.THEME_SYSTEM, "Système"),
+            (theme.THEME_LIGHT, "Clair"),
+            (theme.THEME_DARK, "Sombre"),
+        ):
+            action = QAction(icons.toolbar_icon(mode), label, self)
+            action.setCheckable(True)
+            action.setChecked(mode == self._theme_mode)
+            action.triggered.connect(
+                lambda _checked=False, selected=mode: self._set_theme_mode(selected)
+            )
+            appearance_group.addAction(action)
+            self._appearance_menu.addAction(action)
+            self._appearance_actions[mode] = action
+
+        self._appearance_button = QToolButton()
+        self._appearance_button.setObjectName("toolbarMenuButton")
+        self._appearance_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self._appearance_button.setMenu(self._appearance_menu)
+        self._appearance_button.setPopupMode(QToolButton.InstantPopup)
+        self._appearance_button.setAutoRaise(True)
+        self._appearance_button.setCursor(Qt.PointingHandCursor)
+        self._appearance_button.setToolTip("Choisir le thème de l'interface")
+        self._update_appearance_button()
+        toolbar.addWidget(self._appearance_button)
+        toolbar.addWidget(self._toolbar_gap(4))
+
         self.refresh_action = QAction(icons.toolbar_icon("refresh"), "Rafraîchir", self)
         self.refresh_action.setShortcuts(["F5", "Ctrl+R"])
         self.refresh_action.setToolTip("Rafraîchir le dépôt (F5)")
@@ -230,6 +273,80 @@ class MainWindow(QMainWindow):
             self.refresh_action,
         ]
         self._toolbar = toolbar
+
+    def _update_appearance_button(self) -> None:
+        labels = {
+            theme.THEME_SYSTEM: "Système",
+            theme.THEME_LIGHT: "Clair",
+            theme.THEME_DARK: "Sombre",
+        }
+        self._appearance_button.setIcon(icons.toolbar_icon(self._theme_mode))
+        self._appearance_button.setText(labels[self._theme_mode])
+
+    def _set_theme_mode(self, mode: str, *, persist: bool = True) -> None:
+        if mode not in theme.THEME_MODES:
+            return
+        self._theme_mode = mode
+        if persist:
+            theme.save_theme_mode(mode)
+        app = QApplication.instance()
+        if app is None:
+            return
+        theme.apply_theme(app, mode)
+        icons.clear_icon_caches()
+        for value, action in self._appearance_actions.items():
+            action.setChecked(value == mode)
+            action.setIcon(icons.toolbar_icon(value))
+        self._update_appearance_button()
+        self._apply_theme_to_widgets()
+
+    def _on_system_color_scheme_changed(self, _scheme) -> None:
+        if self._theme_mode == theme.THEME_SYSTEM:
+            self._set_theme_mode(theme.THEME_SYSTEM, persist=False)
+
+    def _apply_theme_to_widgets(self) -> None:
+        action_icons = {
+            self.open_action: "open",
+            self.fetch_action: "fetch",
+            self.pull_action: "pull",
+            self.push_action: "push",
+            self.branch_action: "branch",
+            self.gitflow_action: "gitflow",
+            self.stash_action: "stash",
+            self.pop_action: "pop",
+            self.refresh_action: "refresh",
+        }
+        for action, icon_name in action_icons.items():
+            action.setIcon(icons.toolbar_icon(icon_name))
+
+        self._welcome_title.setStyleSheet(
+            f"color: {theme.TEXT}; font-size: 28pt; font-weight: 700;"
+        )
+        self._welcome_subtitle.setStyleSheet(
+            f"color: {theme.TEXT_MUTED}; font-size: 11pt;"
+        )
+        self._diff_header.setStyleSheet(
+            f"background-color: {theme.PANEL_BG}; border-bottom: 1px solid {theme.BORDER};"
+        )
+        self._diff_close_btn.setIcon(icons.toolbar_icon("back"))
+        self._diff_close_btn.setStyleSheet(
+            "QToolButton { border: 1px solid " + theme.BORDER + "; background: " + theme.SURFACE + ";"
+            f" color: {theme.TEXT}; padding: 3px 10px; border-radius: 5px; }}"
+            f"QToolButton:hover {{ background-color: {theme.BORDER}; border-color: {theme.ACCENT}; }}"
+        )
+        self._busy_label.setStyleSheet(f"color: {theme.TEXT}; padding-left: 8px;")
+        self._version_label.setStyleSheet(f"color: {theme.TEXT_MUTED}; padding: 0 8px;")
+
+        for panel in (
+            self.sidebar,
+            self.graph_panel,
+            self.diff_panel,
+            self.staging_panel,
+            self.details_panel,
+        ):
+            apply_panel_theme = getattr(panel, "apply_theme", None)
+            if apply_panel_theme is not None:
+                apply_panel_theme()
 
     @staticmethod
     def _make_toolbar_button(
@@ -298,6 +415,13 @@ class MainWindow(QMainWindow):
 
         # --- droite : staging + détails ---
         right_panel = QTabWidget()
+        right_panel.setObjectName("inspectorTabs")
+        right_panel.setDocumentMode(True)
+        right_panel.setAccessibleName("Inspecteur du dépôt")
+        right_panel.tabBar().setObjectName("inspectorTabBar")
+        right_panel.tabBar().setExpanding(True)
+        right_panel.tabBar().setDrawBase(False)
+        right_panel.tabBar().setUsesScrollButtons(False)
 
         self.staging_panel = StagingPanel()
         self.staging_panel.stage_requested.connect(self._stage)
@@ -308,10 +432,12 @@ class MainWindow(QMainWindow):
             self._generate_commit_message
         )
         right_panel.addTab(self.staging_panel, "Staging")
+        right_panel.setTabToolTip(0, "Préparer les fichiers et créer un commit")
 
         self.details_panel = DetailsPanel()
         self.details_panel.file_diff_requested.connect(self._show_commit_diff)
-        right_panel.addTab(self.details_panel, "Détails du commit")
+        right_panel.addTab(self.details_panel, "Détails")
+        right_panel.setTabToolTip(1, "Inspecter le commit sélectionné et ses fichiers")
         self._right_panel = right_panel
 
         splitter.addWidget(right_panel)
@@ -325,20 +451,20 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(32, 32, 32, 32)
         layout.addStretch(1)
 
-        title = QLabel("GitKrakit")
-        title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet(
-            f"color: {theme.HIGHLIGHT}; font-size: 28pt; font-weight: 700;"
+        self._welcome_title = QLabel("GitKrakit")
+        self._welcome_title.setAlignment(Qt.AlignCenter)
+        self._welcome_title.setStyleSheet(
+            f"color: {theme.TEXT}; font-size: 28pt; font-weight: 700;"
         )
-        layout.addWidget(title)
+        layout.addWidget(self._welcome_title)
 
-        subtitle = QLabel(
+        self._welcome_subtitle = QLabel(
             "Visualise l'historique, prépare tes commits et garde tes branches synchronisées."
         )
-        subtitle.setAlignment(Qt.AlignCenter)
-        subtitle.setWordWrap(True)
-        subtitle.setStyleSheet(f"color: {theme.TEXT_MUTED}; font-size: 11pt;")
-        layout.addWidget(subtitle)
+        self._welcome_subtitle.setAlignment(Qt.AlignCenter)
+        self._welcome_subtitle.setWordWrap(True)
+        self._welcome_subtitle.setStyleSheet(f"color: {theme.TEXT_MUTED}; font-size: 11pt;")
+        layout.addWidget(self._welcome_subtitle)
 
         open_button = QPushButton("Ouvrir un dépôt Git")
         open_button.setObjectName("primaryButton")
@@ -367,29 +493,29 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        bar = QWidget()
-        bar.setStyleSheet(
+        self._diff_header = QWidget()
+        self._diff_header.setStyleSheet(
             f"background-color: {theme.PANEL_BG}; border-bottom: 1px solid {theme.BORDER};"
         )
-        bar_layout = QHBoxLayout(bar)
+        bar_layout = QHBoxLayout(self._diff_header)
         bar_layout.setContentsMargins(4, 4, 4, 4)
 
-        close_btn = QToolButton()
-        close_btn.setIcon(icons.toolbar_icon("back"))
-        close_btn.setText("Retour au graphe")
-        close_btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        close_btn.setToolTip("Fermer le diff et revenir au graphe")
-        close_btn.setCursor(Qt.PointingHandCursor)
-        close_btn.setStyleSheet(
+        self._diff_close_btn = QToolButton()
+        self._diff_close_btn.setIcon(icons.toolbar_icon("back"))
+        self._diff_close_btn.setText("Retour au graphe")
+        self._diff_close_btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self._diff_close_btn.setToolTip("Fermer le diff et revenir au graphe")
+        self._diff_close_btn.setCursor(Qt.PointingHandCursor)
+        self._diff_close_btn.setStyleSheet(
             "QToolButton { border: 1px solid " + theme.BORDER + "; background: " + theme.SURFACE + ";"
             f" color: {theme.TEXT}; padding: 3px 10px; border-radius: 5px; }}"
             f"QToolButton:hover {{ background-color: {theme.BORDER}; border-color: {theme.ACCENT}; }}"
         )
-        close_btn.clicked.connect(self._close_diff)
-        bar_layout.addWidget(close_btn)
+        self._diff_close_btn.clicked.connect(self._close_diff)
+        bar_layout.addWidget(self._diff_close_btn)
         bar_layout.addStretch(1)
 
-        layout.addWidget(bar)
+        layout.addWidget(self._diff_header)
         layout.addWidget(diff_panel, stretch=1)
         return page
 
@@ -427,6 +553,8 @@ class MainWindow(QMainWindow):
             repository_menu.addAction(action)
 
         view_menu = self.menuBar().addMenu("&Affichage")
+        view_menu.addMenu(self._appearance_menu)
+        view_menu.addSeparator()
         view_menu.addAction(self._toolbar.toggleViewAction())
         view_menu.addAction(self.terminal.toggleViewAction())
 
@@ -443,9 +571,9 @@ class MainWindow(QMainWindow):
         self._busy_progress.hide()
         self.statusBar().addPermanentWidget(self._busy_progress)
 
-        version_label = QLabel(f"v{__version__}")
-        version_label.setStyleSheet(f"color: {theme.TEXT_MUTED}; padding: 0 8px;")
-        self.statusBar().addPermanentWidget(version_label)
+        self._version_label = QLabel(f"v{__version__}")
+        self._version_label.setStyleSheet(f"color: {theme.TEXT_MUTED}; padding: 0 8px;")
+        self.statusBar().addPermanentWidget(self._version_label)
 
     # ------------------------------------------------------------------
     # Ouverture de dépôt
