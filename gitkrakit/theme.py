@@ -15,6 +15,7 @@ TEXT_MUTED = "#8b949e"
 HIGHLIGHT = "#ffffff"
 ACCENT = "#58a6ff"
 ACCENT_DIM = "#1f6feb"
+ACCENT_SOFT = "#172b42"
 
 # Couleur du texte des fichiers selon leur état (panneau de staging)
 STATUS_COLORS = {
@@ -66,6 +67,48 @@ QListWidget::item:hover, QTreeWidget::item:hover {{
 QListWidget::item:selected, QTreeWidget::item:selected {{
     background-color: rgba(31, 111, 235, 0.45);
     color: {HIGHLIGHT};
+}}
+
+/* ---- barre latérale ---- */
+QTreeWidget#sidebarTree {{
+    background-color: {PANEL_BG};
+    border: none;
+    border-radius: 0;
+    padding: 3px 7px 8px 4px;
+    outline: none;
+}}
+QTreeWidget#sidebarTree::item {{
+    color: {TEXT};
+    min-height: 22px;
+    padding: 2px 6px;
+    margin: 1px 0;
+    border: none;
+    border-radius: 6px;
+}}
+QTreeWidget#sidebarTree::item:hover {{
+    background-color: {SURFACE};
+}}
+QTreeWidget#sidebarTree::item:selected {{
+    background-color: {ACCENT_SOFT};
+    color: {HIGHLIGHT};
+}}
+QWidget#sidebarGroupHeader {{
+    background-color: {PANEL_BG};
+    border: none;
+}}
+QLineEdit#sidebarFilter {{
+    background-color: {SURFACE};
+    border: 1px solid transparent;
+    border-radius: 8px;
+    padding: 7px 10px;
+    font-family: "Segoe UI", sans-serif;
+}}
+QLineEdit#sidebarFilter:hover {{
+    border-color: {BORDER};
+}}
+QLineEdit#sidebarFilter:focus {{
+    background-color: {PANEL_BG};
+    border-color: {ACCENT};
 }}
 
 /* ---- zones de texte ---- */

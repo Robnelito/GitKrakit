@@ -16,10 +16,11 @@ exécute les actions Git.
 from __future__ import annotations
 
 import os
+from functools import lru_cache
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QFont
+from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtGui import QBrush, QColor, QFont, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
@@ -66,38 +67,77 @@ def _same_path(a: str, b: str) -> bool:
 
 def _make_tree() -> QTreeWidget:
     tree = QTreeWidget()
+    tree.setObjectName("sidebarTree")
     tree.setColumnCount(2)
     tree.setHeaderHidden(True)
     tree.setRootIsDecorated(True)
     tree.setUniformRowHeights(True)
     tree.setAnimated(True)
+    tree.setIndentation(17)
+    tree.setIconSize(QSize(16, 16))
+    tree.setTextElideMode(Qt.ElideRight)
+    tree.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
     # colonne 0 (nom) extensible, colonne 1 (compteur) étroite et fixe
     tree.header().setStretchLastSection(False)
     tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
     tree.header().setSectionResizeMode(1, QHeaderView.Fixed)
-    tree.header().resizeSection(1, 52)
+    tree.header().resizeSection(1, 58)
     return tree
 
 
+@lru_cache(maxsize=32)
+def _sidebar_icon(kind: str, color: str) -> QIcon:
+    """Small vector-like icons that stay crisp and avoid platform glyphs."""
+    pixmap = QPixmap(16, 16)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+    tone = QColor(color)
+    pen = QPen(tone, 1.5, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+    painter.setPen(pen)
+    painter.setBrush(Qt.NoBrush)
+
+    if kind == "branch":
+        painter.drawLine(5, 4, 5, 12)
+        painter.drawLine(5, 8, 10, 8)
+        painter.drawEllipse(3, 2, 4, 4)
+        painter.drawEllipse(3, 10, 4, 4)
+        painter.drawEllipse(9, 6, 4, 4)
+    elif kind == "tag":
+        painter.drawLine(3, 4, 9, 4)
+        painter.drawLine(9, 4, 13, 8)
+        painter.drawLine(13, 8, 8, 13)
+        painter.drawLine(8, 13, 3, 8)
+        painter.drawLine(3, 8, 3, 4)
+        painter.drawEllipse(5, 6, 2, 2)
+    elif kind == "workspace":
+        for x, y in ((3, 3), (9, 3), (3, 9), (9, 9)):
+            painter.drawRoundedRect(x, y, 4, 4, 1, 1)
+    elif kind == "repo":
+        painter.drawRoundedRect(2.5, 4.5, 11, 8.5, 2, 2)
+        painter.drawLine(4, 7, 12, 7)
+        painter.drawEllipse(4, 9, 2, 2)
+
+    painter.end()
+    return QIcon(pixmap)
+
+
 def _group_header(text: str, accent: str) -> QWidget:
-    """Bandeau de titre d'une zone (DÉPÔTS / OBJETS GIT) : une barre
-    verticale de couleur + le libellé, pour marquer visuellement la
-    frontière entre gestion de répertoires et gestion d'objets Git."""
+    """Compact title row separating repositories from Git references."""
     header = QWidget()
-    header.setStyleSheet(f"background-color: {theme.PANEL_BG};")
+    header.setObjectName("sidebarGroupHeader")
     layout = QHBoxLayout(header)
-    layout.setContentsMargins(8, 5, 8, 5)
-    layout.setSpacing(6)
+    layout.setContentsMargins(12, 9, 10, 6)
+    layout.setSpacing(8)
 
-    bar = QLabel()
-    bar.setFixedWidth(3)
-    bar.setStyleSheet(f"background-color: {accent}; border-radius: 1px;")
-    layout.addWidget(bar)
+    dot = QLabel()
+    dot.setFixedSize(5, 5)
+    dot.setStyleSheet(f"background-color: {accent}; border-radius: 2px;")
+    layout.addWidget(dot, alignment=Qt.AlignVCenter)
 
-    label = QLabel(text.upper())
-    font = QFont("Segoe UI", 8)
-    font.setBold(True)
-    font.setLetterSpacing(QFont.PercentageSpacing, 105)
+    label = QLabel(text)
+    font = QFont("Segoe UI", 9)
+    font.setWeight(QFont.DemiBold)
     label.setFont(font)
     label.setStyleSheet(f"color: {theme.TEXT}; background: transparent;")
     layout.addWidget(label)
@@ -130,6 +170,7 @@ class SidebarPanel(QWidget):
         layout.setSpacing(4)
 
         self.filter_edit = QLineEdit()
+        self.filter_edit.setObjectName("sidebarFilter")
         self.filter_edit.setPlaceholderText("Filtrer…")
         self.filter_edit.setClearButtonEnabled(True)
         self.filter_edit.setAccessibleName("Filtrer la barre latérale")
@@ -138,7 +179,7 @@ class SidebarPanel(QWidget):
         self.filter_edit.textChanged.connect(self._apply_filter)
         margin_wrap = QWidget()
         margin_layout = QVBoxLayout(margin_wrap)
-        margin_layout.setContentsMargins(6, 6, 6, 0)
+        margin_layout.setContentsMargins(10, 10, 10, 4)
         margin_layout.addWidget(self.filter_edit)
         layout.addWidget(margin_wrap)
 
@@ -163,7 +204,7 @@ class SidebarPanel(QWidget):
         refs_layout = QVBoxLayout(refs_widget)
         refs_layout.setContentsMargins(0, 0, 0, 0)
         refs_layout.setSpacing(0)
-        refs_layout.addWidget(_group_header("Objets Git", theme.LANE_COLORS[0]))
+        refs_layout.addWidget(_group_header("Branches et tags", theme.LANE_COLORS[0]))
         self.refs_tree = _make_tree()
         self.refs_tree.setAccessibleName("Branches, tags et Git Flow")
         self.refs_tree.setToolTip("Double-clique une branche locale pour l'extraire")
@@ -177,6 +218,9 @@ class SidebarPanel(QWidget):
         splitter = QSplitter(Qt.Vertical)
         splitter.addWidget(repos_widget)
         splitter.addWidget(refs_widget)
+        splitter.setChildrenCollapsible(False)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
         splitter.setSizes([180, 420])
         splitter.setStyleSheet(f"QSplitter::handle {{ background-color: {theme.BORDER}; }}")
         layout.addWidget(splitter, stretch=1)
@@ -228,6 +272,7 @@ class SidebarPanel(QWidget):
         for workspace in self._manager.workspaces:
             ws_item = QTreeWidgetItem([workspace.name, ""])
             ws_item.setData(0, _KIND_ROLE, K_WORKSPACE)
+            ws_item.setIcon(0, _sidebar_icon("workspace", theme.TEXT_MUTED))
             ws_section.addChild(ws_item)
             for repo_path in workspace.repos:
                 item = self._repo_item(repo_path, K_REPO)
@@ -276,7 +321,7 @@ class SidebarPanel(QWidget):
         status = self._gitflow
 
         if status is None:
-            section = self._add_section(tree, "Gitflow", 0)
+            section = self._add_section(tree, "Git Flow", 0)
             section.setData(0, _KIND_ROLE, K_SECTION_GITFLOW)
             init_item = QTreeWidgetItem(["Initialiser Git Flow…", ""])
             init_item.setData(0, _KIND_ROLE, K_GITFLOW_INIT)
@@ -285,13 +330,14 @@ class SidebarPanel(QWidget):
             return
 
         total = len(status.features) + len(status.releases) + len(status.hotfixes)
-        section = self._add_section(tree, "Gitflow", total)
+        section = self._add_section(tree, "Git Flow", total)
         section.setData(0, _KIND_ROLE, K_SECTION_GITFLOW)
 
         for branch in (status.config.develop, status.config.main):
             item = QTreeWidgetItem([branch, ""])
             item.setData(0, _KIND_ROLE, K_LOCAL_BRANCH)
             item.setData(0, _DATA_ROLE, branch)
+            item.setIcon(0, _sidebar_icon("branch", theme.TEXT_MUTED))
             self._mark_if_current(item, branch)
             self._set_sync_badge(item, branch)
             section.addChild(item)
@@ -310,6 +356,7 @@ class SidebarPanel(QWidget):
                 child = QTreeWidgetItem([name, ""])
                 child.setData(0, _KIND_ROLE, kind)
                 child.setData(0, _DATA_ROLE, name)
+                child.setIcon(0, _sidebar_icon("branch", theme.TEXT_MUTED))
                 full_name = self._gitflow_full_name(kind, name)
                 self._mark_if_current(child, full_name)
                 self._set_sync_badge(child, full_name)
@@ -352,6 +399,9 @@ class SidebarPanel(QWidget):
             item = QTreeWidgetItem([label, ""])
             item.setData(0, _KIND_ROLE, kind)
             item.setData(0, _DATA_ROLE, full_name)
+            icon_kind = "tag" if kind == K_TAG else "branch"
+            icon_color = theme.LANE_COLORS[6] if kind == K_REMOTE_BRANCH else theme.TEXT_MUTED
+            item.setIcon(0, _sidebar_icon(icon_kind, icon_color))
             if mark_current:
                 self._mark_if_current(item, full_name)
                 self._set_sync_badge(item, full_name)
@@ -380,7 +430,7 @@ class SidebarPanel(QWidget):
         True si c'était le cas, pour que l'appelant sache où défiler."""
         if self._active_repo_path is None or not _same_path(repo_path, self._active_repo_path):
             return False
-        item.setText(0, f"● {item.text(0)}")
+        item.setIcon(0, _sidebar_icon("repo", theme.ACCENT))
         item.setForeground(0, QBrush(QColor(theme.ACCENT)))
         font = item.font(0)
         font.setBold(True)
@@ -394,11 +444,16 @@ class SidebarPanel(QWidget):
 
     def _mark_if_current(self, item: QTreeWidgetItem, branch: str) -> None:
         if branch == self._current_branch:
-            item.setText(0, f"✓ {item.text(0)}")
+            item.setIcon(0, _sidebar_icon("branch", theme.ACCENT))
             item.setForeground(0, QBrush(QColor(theme.ACCENT)))
             font = item.font(0)
             font.setBold(True)
             item.setFont(0, font)
+            tint = QColor(theme.ACCENT)
+            tint.setAlpha(20)
+            item.setBackground(0, QBrush(tint))
+            item.setBackground(1, QBrush(tint))
+            item.setToolTip(0, f"{branch} — branche actuelle")
 
     def _set_sync_badge(self, item: QTreeWidgetItem, branch_name: str) -> None:
         """Ajoute, dans la colonne de droite, un indicateur ↓N/↑N quand la
@@ -434,9 +489,9 @@ class SidebarPanel(QWidget):
 
     @staticmethod
     def _add_section(tree: QTreeWidget, title: str, count: int) -> QTreeWidgetItem:
-        item = QTreeWidgetItem([title.upper(), str(count) if count else ""])
+        item = QTreeWidgetItem([title, str(count) if count else ""])
         font = QFont("Segoe UI", 8)
-        font.setBold(True)
+        font.setWeight(QFont.DemiBold)
         item.setFont(0, font)
         item.setForeground(0, QBrush(QColor(theme.TEXT_MUTED)))
         item.setFont(1, font)
@@ -449,6 +504,7 @@ class SidebarPanel(QWidget):
     @staticmethod
     def _repo_item(repo_path: str, kind: str) -> QTreeWidgetItem:
         item = QTreeWidgetItem([Path(repo_path).name or repo_path, ""])
+        item.setIcon(0, _sidebar_icon("repo", theme.TEXT_MUTED))
         item.setToolTip(0, repo_path)
         item.setData(0, _KIND_ROLE, kind)
         item.setData(0, _DATA_ROLE, repo_path)
