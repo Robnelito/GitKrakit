@@ -97,6 +97,7 @@ class MainWindow(QMainWindow):
         self._build_terminal_dock()
         self._build_menus()
         self._build_status_bar()
+        self.setWindowIcon(icons.app_icon("repo", theme.ACCENT, 32))
 
         self._auto_fetch_timer = QTimer(self)
         self._auto_fetch_timer.setInterval(AUTO_FETCH_INTERVAL_MS)
@@ -130,7 +131,7 @@ class MainWindow(QMainWindow):
     def _build_toolbar(self) -> None:
         toolbar = QToolBar("Actions principales")
         toolbar.setObjectName("mainToolbar")
-        toolbar.setIconSize(QSize(18, 18))
+        toolbar.setIconSize(QSize(20, 20))
         toolbar.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         toolbar.setMovable(False)
         toolbar.setFloatable(False)
@@ -176,11 +177,18 @@ class MainWindow(QMainWindow):
         self.branch_action.triggered.connect(self.create_branch_dialog)
 
         gitflow_menu = QMenu("Git Flow", self)
-        gitflow_menu.addAction("Initialiser Git Flow…", self._gitflow_init)
+        self._gitflow_init_action = gitflow_menu.addAction(
+            icons.app_icon("gitflow"), "Initialiser Git Flow…", self._gitflow_init
+        )
         gitflow_menu.addSeparator()
-        gitflow_menu.addAction("Démarrer une feature…", lambda: self._gitflow_start("feature"))
-        gitflow_menu.addAction("Démarrer une release…", lambda: self._gitflow_start("release"))
-        gitflow_menu.addAction("Démarrer un hotfix…", lambda: self._gitflow_start("hotfix"))
+        self._gitflow_start_actions = [
+            gitflow_menu.addAction(
+                icons.app_icon("plus"),
+                f"Démarrer une {kind}…",
+                lambda _checked=False, value=kind: self._gitflow_start(value),
+            )
+            for kind in ("feature", "release", "hotfix")
+        ]
         self.gitflow_action = QAction(icons.toolbar_icon("gitflow"), "Git Flow", self)
         self.gitflow_action.setToolTip("Initialiser ou gérer un workflow Git Flow")
         self.gitflow_action.setMenu(gitflow_menu)
@@ -319,6 +327,17 @@ class MainWindow(QMainWindow):
         for action, icon_name in action_icons.items():
             action.setIcon(icons.toolbar_icon(icon_name))
 
+        self.setWindowIcon(icons.app_icon("repo", theme.ACCENT, 32))
+        self._gitflow_init_action.setIcon(icons.app_icon("gitflow"))
+        for action in self._gitflow_start_actions:
+            action.setIcon(icons.app_icon("plus"))
+        self._welcome_open_button.setIcon(icons.app_icon("open"))
+        self._right_panel.setTabIcon(0, icons.app_icon("staging"))
+        self._right_panel.setTabIcon(1, icons.app_icon("details"))
+        self._quit_action.setIcon(icons.app_icon("close"))
+        self._toolbar_toggle_action.setIcon(icons.app_icon("toolbar"))
+        self._terminal_toggle_action.setIcon(icons.app_icon("terminal"))
+
         self._welcome_title.setStyleSheet(
             f"color: {theme.TEXT}; font-size: 28pt; font-weight: 700;"
         )
@@ -343,6 +362,7 @@ class MainWindow(QMainWindow):
             self.diff_panel,
             self.staging_panel,
             self.details_panel,
+            self.terminal,
         ):
             apply_panel_theme = getattr(panel, "apply_theme", None)
             if apply_panel_theme is not None:
@@ -422,6 +442,7 @@ class MainWindow(QMainWindow):
         right_panel.tabBar().setExpanding(True)
         right_panel.tabBar().setDrawBase(False)
         right_panel.tabBar().setUsesScrollButtons(False)
+        right_panel.setIconSize(QSize(17, 17))
 
         self.staging_panel = StagingPanel()
         self.staging_panel.stage_requested.connect(self._stage)
@@ -431,12 +452,12 @@ class MainWindow(QMainWindow):
         self.staging_panel.generate_message_requested.connect(
             self._generate_commit_message
         )
-        right_panel.addTab(self.staging_panel, "Staging")
+        right_panel.addTab(self.staging_panel, icons.app_icon("staging"), "Staging")
         right_panel.setTabToolTip(0, "Préparer les fichiers et créer un commit")
 
         self.details_panel = DetailsPanel()
         self.details_panel.file_diff_requested.connect(self._show_commit_diff)
-        right_panel.addTab(self.details_panel, "Détails")
+        right_panel.addTab(self.details_panel, icons.app_icon("details"), "Détails")
         right_panel.setTabToolTip(1, "Inspecter le commit sélectionné et ses fichiers")
         self._right_panel = right_panel
 
@@ -466,14 +487,15 @@ class MainWindow(QMainWindow):
         self._welcome_subtitle.setStyleSheet(f"color: {theme.TEXT_MUTED}; font-size: 11pt;")
         layout.addWidget(self._welcome_subtitle)
 
-        open_button = QPushButton("Ouvrir un dépôt Git")
-        open_button.setObjectName("primaryButton")
-        open_button.setMinimumWidth(190)
-        open_button.setToolTip("Choisir un dossier contenant un dépôt Git")
-        open_button.clicked.connect(self.open_repo_dialog)
+        self._welcome_open_button = QPushButton(icons.app_icon("open"), "Ouvrir un dépôt Git")
+        self._welcome_open_button.setObjectName("primaryButton")
+        self._welcome_open_button.setIconSize(QSize(18, 18))
+        self._welcome_open_button.setMinimumWidth(190)
+        self._welcome_open_button.setToolTip("Choisir un dossier contenant un dépôt Git")
+        self._welcome_open_button.clicked.connect(self.open_repo_dialog)
         button_row = QHBoxLayout()
         button_row.addStretch(1)
-        button_row.addWidget(open_button)
+        button_row.addWidget(self._welcome_open_button)
         button_row.addStretch(1)
         layout.addSpacing(12)
         layout.addLayout(button_row)
@@ -534,10 +556,10 @@ class MainWindow(QMainWindow):
         file_menu = self.menuBar().addMenu("&Fichier")
         file_menu.addAction(self.open_action)
         file_menu.addSeparator()
-        quit_action = QAction("Quitter", self)
-        quit_action.setShortcut("Ctrl+Q")
-        quit_action.triggered.connect(self.close)
-        file_menu.addAction(quit_action)
+        self._quit_action = QAction(icons.app_icon("close"), "Quitter", self)
+        self._quit_action.setShortcut("Ctrl+Q")
+        self._quit_action.triggered.connect(self.close)
+        file_menu.addAction(self._quit_action)
 
         repository_menu = self.menuBar().addMenu("&Dépôt")
         for action in (
@@ -555,8 +577,12 @@ class MainWindow(QMainWindow):
         view_menu = self.menuBar().addMenu("&Affichage")
         view_menu.addMenu(self._appearance_menu)
         view_menu.addSeparator()
-        view_menu.addAction(self._toolbar.toggleViewAction())
-        view_menu.addAction(self.terminal.toggleViewAction())
+        self._toolbar_toggle_action = self._toolbar.toggleViewAction()
+        self._toolbar_toggle_action.setIcon(icons.app_icon("toolbar"))
+        self._terminal_toggle_action = self.terminal.toggleViewAction()
+        self._terminal_toggle_action.setIcon(icons.app_icon("terminal"))
+        view_menu.addAction(self._toolbar_toggle_action)
+        view_menu.addAction(self._terminal_toggle_action)
 
     def _build_status_bar(self) -> None:
         self._busy_label = QLabel("")

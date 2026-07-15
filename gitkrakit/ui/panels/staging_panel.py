@@ -6,7 +6,7 @@ commit. N'appelle jamais le backend directement : il émet des signaux
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from gitkrakit.core import FileStatus
-from gitkrakit.ui.icons import status_icon
+from gitkrakit.ui.icons import app_icon, status_icon
 
 
 class StagingPanel(QWidget):
@@ -51,7 +51,8 @@ class StagingPanel(QWidget):
         self.unstaged_list.itemSelectionChanged.connect(self._update_buttons)
         layout.addWidget(self.unstaged_list)
 
-        self.stage_btn = QPushButton("Indexer la sélection →")
+        self.stage_btn = QPushButton(app_icon("forward"), "Indexer la sélection")
+        self.stage_btn.setIconSize(QSize(18, 18))
         self.stage_btn.setToolTip("Ajouter les fichiers sélectionnés au prochain commit")
         self.stage_btn.clicked.connect(self._emit_stage)
         layout.addWidget(self.stage_btn)
@@ -71,7 +72,8 @@ class StagingPanel(QWidget):
         self.staged_list.itemSelectionChanged.connect(self._update_buttons)
         layout.addWidget(self.staged_list)
 
-        self.unstage_btn = QPushButton("← Retirer la sélection")
+        self.unstage_btn = QPushButton(app_icon("back"), "Retirer la sélection")
+        self.unstage_btn.setIconSize(QSize(18, 18))
         self.unstage_btn.setToolTip("Retirer les fichiers sélectionnés du prochain commit")
         self.unstage_btn.clicked.connect(self._emit_unstage)
         layout.addWidget(self.unstage_btn)
@@ -94,7 +96,8 @@ class StagingPanel(QWidget):
         self.agent_combo.addItem("Claude Code", "claude")
         generator_row.addWidget(self.agent_combo, stretch=1)
 
-        self.generate_btn = QPushButton("Générer via ACP")
+        self.generate_btn = QPushButton(app_icon("sparkles"), "Générer via ACP")
+        self.generate_btn.setIconSize(QSize(18, 18))
         self.generate_btn.setToolTip(
             "Analyser uniquement le diff indexé et proposer un message Conventional Commit"
         )
@@ -102,7 +105,8 @@ class StagingPanel(QWidget):
         generator_row.addWidget(self.generate_btn)
         layout.addLayout(generator_row)
 
-        self.commit_btn = QPushButton("Créer le commit")
+        self.commit_btn = QPushButton(app_icon("commit"), "Créer le commit")
+        self.commit_btn.setIconSize(QSize(18, 18))
         self.commit_btn.setObjectName("primaryButton")
         self.commit_btn.setShortcut("Ctrl+Return")
         self.commit_btn.setToolTip("Créer le commit (Ctrl+Entrée)")
@@ -111,6 +115,10 @@ class StagingPanel(QWidget):
         self._update_buttons()
 
     def apply_theme(self) -> None:
+        self.stage_btn.setIcon(app_icon("forward"))
+        self.unstage_btn.setIcon(app_icon("back"))
+        self.generate_btn.setIcon(app_icon("sparkles"))
+        self.commit_btn.setIcon(app_icon("commit"))
         for list_widget in (self.unstaged_list, self.staged_list):
             for index in range(list_widget.count()):
                 item = list_widget.item(index)

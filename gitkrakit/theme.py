@@ -23,6 +23,7 @@ def configure_fonts(app) -> None:
     available = set(QFontDatabase.families())
 
     ui_candidates = (
+        "Bahnschrift",
         "Segoe UI Variable Text",
         "Inter",
         "Segoe UI",

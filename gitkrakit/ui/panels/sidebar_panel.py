@@ -16,11 +16,10 @@ exécute les actions Git.
 from __future__ import annotations
 
 import os
-from functools import lru_cache
 from pathlib import Path
 
 from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QFont, QIcon, QPainter, QPen, QPixmap
+from PySide6.QtGui import QBrush, QColor, QFont
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
@@ -39,6 +38,7 @@ from PySide6.QtWidgets import (
 
 from gitkrakit import theme
 from gitkrakit.core import GitFlowStatus
+from gitkrakit.ui.icons import app_icon
 from gitkrakit.workspace import WorkspaceError, WorkspaceManager
 
 _KIND_ROLE = Qt.UserRole
@@ -83,43 +83,6 @@ def _make_tree() -> QTreeWidget:
     tree.header().setSectionResizeMode(1, QHeaderView.Fixed)
     tree.header().resizeSection(1, 58)
     return tree
-
-
-@lru_cache(maxsize=32)
-def _sidebar_icon(kind: str, color: str) -> QIcon:
-    """Small vector-like icons that stay crisp and avoid platform glyphs."""
-    pixmap = QPixmap(16, 16)
-    pixmap.fill(Qt.transparent)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing)
-    tone = QColor(color)
-    pen = QPen(tone, 1.5, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
-    painter.setPen(pen)
-    painter.setBrush(Qt.NoBrush)
-
-    if kind == "branch":
-        painter.drawLine(5, 4, 5, 12)
-        painter.drawLine(5, 8, 10, 8)
-        painter.drawEllipse(3, 2, 4, 4)
-        painter.drawEllipse(3, 10, 4, 4)
-        painter.drawEllipse(9, 6, 4, 4)
-    elif kind == "tag":
-        painter.drawLine(3, 4, 9, 4)
-        painter.drawLine(9, 4, 13, 8)
-        painter.drawLine(13, 8, 8, 13)
-        painter.drawLine(8, 13, 3, 8)
-        painter.drawLine(3, 8, 3, 4)
-        painter.drawEllipse(5, 6, 2, 2)
-    elif kind == "workspace":
-        for x, y in ((3, 3), (9, 3), (3, 9), (9, 9)):
-            painter.drawRoundedRect(x, y, 4, 4, 1, 1)
-    elif kind == "repo":
-        painter.drawRoundedRect(2.5, 4.5, 11, 8.5, 2, 2)
-        painter.drawLine(4, 7, 12, 7)
-        painter.drawEllipse(4, 9, 2, 2)
-
-    painter.end()
-    return QIcon(pixmap)
 
 
 def _group_header(text: str, accent: str) -> QWidget:
@@ -243,7 +206,6 @@ class SidebarPanel(QWidget):
         self.refresh()
 
     def apply_theme(self) -> None:
-        _sidebar_icon.cache_clear()
         _style_group_header(self._repos_header, theme.ACCENT)
         _style_group_header(self._refs_header, theme.LANE_COLORS[0])
         self._splitter.setStyleSheet(
@@ -296,7 +258,7 @@ class SidebarPanel(QWidget):
         for workspace in self._manager.workspaces:
             ws_item = QTreeWidgetItem([workspace.name, ""])
             ws_item.setData(0, _KIND_ROLE, K_WORKSPACE)
-            ws_item.setIcon(0, _sidebar_icon("workspace", theme.TEXT_MUTED))
+            ws_item.setIcon(0, app_icon("workspace", theme.TEXT_MUTED, 16))
             ws_section.addChild(ws_item)
             for repo_path in workspace.repos:
                 item = self._repo_item(repo_path, K_REPO)
@@ -361,7 +323,7 @@ class SidebarPanel(QWidget):
             item = QTreeWidgetItem([branch, ""])
             item.setData(0, _KIND_ROLE, K_LOCAL_BRANCH)
             item.setData(0, _DATA_ROLE, branch)
-            item.setIcon(0, _sidebar_icon("branch", theme.TEXT_MUTED))
+            item.setIcon(0, app_icon("branch", theme.TEXT_MUTED, 16))
             self._mark_if_current(item, branch)
             self._set_sync_badge(item, branch)
             section.addChild(item)
@@ -380,7 +342,7 @@ class SidebarPanel(QWidget):
                 child = QTreeWidgetItem([name, ""])
                 child.setData(0, _KIND_ROLE, kind)
                 child.setData(0, _DATA_ROLE, name)
-                child.setIcon(0, _sidebar_icon("branch", theme.TEXT_MUTED))
+                child.setIcon(0, app_icon("branch", theme.TEXT_MUTED, 16))
                 full_name = self._gitflow_full_name(kind, name)
                 self._mark_if_current(child, full_name)
                 self._set_sync_badge(child, full_name)
@@ -425,7 +387,7 @@ class SidebarPanel(QWidget):
             item.setData(0, _DATA_ROLE, full_name)
             icon_kind = "tag" if kind == K_TAG else "branch"
             icon_color = theme.LANE_COLORS[6] if kind == K_REMOTE_BRANCH else theme.TEXT_MUTED
-            item.setIcon(0, _sidebar_icon(icon_kind, icon_color))
+            item.setIcon(0, app_icon(icon_kind, icon_color, 16))
             if mark_current:
                 self._mark_if_current(item, full_name)
                 self._set_sync_badge(item, full_name)
@@ -454,7 +416,7 @@ class SidebarPanel(QWidget):
         True si c'était le cas, pour que l'appelant sache où défiler."""
         if self._active_repo_path is None or not _same_path(repo_path, self._active_repo_path):
             return False
-        item.setIcon(0, _sidebar_icon("repo", theme.ACCENT))
+        item.setIcon(0, app_icon("repo", theme.ACCENT, 16))
         item.setForeground(0, QBrush(QColor(theme.ACCENT)))
         font = item.font(0)
         font.setBold(True)
@@ -468,7 +430,7 @@ class SidebarPanel(QWidget):
 
     def _mark_if_current(self, item: QTreeWidgetItem, branch: str) -> None:
         if branch == self._current_branch:
-            item.setIcon(0, _sidebar_icon("branch", theme.ACCENT))
+            item.setIcon(0, app_icon("branch", theme.ACCENT, 16))
             item.setForeground(0, QBrush(QColor(theme.ACCENT)))
             font = item.font(0)
             font.setBold(True)
@@ -528,7 +490,7 @@ class SidebarPanel(QWidget):
     @staticmethod
     def _repo_item(repo_path: str, kind: str) -> QTreeWidgetItem:
         item = QTreeWidgetItem([Path(repo_path).name or repo_path, ""])
-        item.setIcon(0, _sidebar_icon("repo", theme.TEXT_MUTED))
+        item.setIcon(0, app_icon("repo", theme.TEXT_MUTED, 16))
         item.setToolTip(0, repo_path)
         item.setData(0, _KIND_ROLE, kind)
         item.setData(0, _DATA_ROLE, repo_path)
@@ -580,39 +542,51 @@ class SidebarPanel(QWidget):
         data = item.data(0, _DATA_ROLE) if item else None
 
         if kind == K_SECTION_WORKSPACES or (item is None and tree is self.repos_tree):
-            menu.addAction("Nouvel espace de travail…", self._create_workspace)
+            menu.addAction(app_icon("plus"), "Nouvel espace de travail…", self._create_workspace)
         elif kind == K_WORKSPACE:
             name = item.text(0)
-            menu.addAction("Ajouter un dépôt…", lambda: self._add_repo(name))
-            menu.addAction("Renommer…", lambda: self._rename_workspace(name))
-            menu.addAction("Supprimer l'espace", lambda: self._delete_workspace(name))
+            menu.addAction(app_icon("plus"), "Ajouter un dépôt…", lambda: self._add_repo(name))
+            menu.addAction(app_icon("rename"), "Renommer…", lambda: self._rename_workspace(name))
+            menu.addAction(
+                app_icon("clear"), "Supprimer l'espace", lambda: self._delete_workspace(name)
+            )
         elif kind == K_REPO:
             workspace_name = item.parent().text(0)
-            menu.addAction("Ouvrir", lambda: self.open_repo_requested.emit(data))
+            menu.addAction(app_icon("open"), "Ouvrir", lambda: self.open_repo_requested.emit(data))
             menu.addAction(
+                app_icon("remove"),
                 "Retirer de l'espace",
                 lambda: self._try(lambda: self._manager.remove_repo(workspace_name, data)),
             )
         elif kind == K_RECENT:
-            menu.addAction("Ouvrir", lambda: self.open_repo_requested.emit(data))
+            menu.addAction(app_icon("open"), "Ouvrir", lambda: self.open_repo_requested.emit(data))
         elif kind == K_LOCAL_BRANCH:
-            menu.addAction("Checkout", lambda: self.checkout_requested.emit(data))
-            menu.addAction("Supprimer la branche", lambda: self._confirm_delete_branch(data))
+            menu.addAction(app_icon("checkout"), "Checkout", lambda: self.checkout_requested.emit(data))
+            menu.addAction(
+                app_icon("clear"), "Supprimer la branche", lambda: self._confirm_delete_branch(data)
+            )
         elif kind == K_SECTION_GITFLOW:
             if self._gitflow is None:
-                menu.addAction("Initialiser Git Flow…", self.gitflow_init_requested.emit)
+                menu.addAction(
+                    app_icon("gitflow"), "Initialiser Git Flow…", self.gitflow_init_requested.emit
+                )
             else:
                 menu.addAction(
+                    app_icon("plus"),
                     "Démarrer une feature…", lambda: self.gitflow_start_requested.emit(K_GF_FEATURE)
                 )
                 menu.addAction(
+                    app_icon("plus"),
                     "Démarrer une release…", lambda: self.gitflow_start_requested.emit(K_GF_RELEASE)
                 )
                 menu.addAction(
+                    app_icon("plus"),
                     "Démarrer un hotfix…", lambda: self.gitflow_start_requested.emit(K_GF_HOTFIX)
                 )
         elif kind == K_GITFLOW_INIT:
-            menu.addAction("Initialiser Git Flow…", self.gitflow_init_requested.emit)
+            menu.addAction(
+                app_icon("gitflow"), "Initialiser Git Flow…", self.gitflow_init_requested.emit
+            )
         elif kind in (K_GF_FEATURE, K_GF_RELEASE, K_GF_HOTFIX):
             full = self._gitflow_full_name(kind, data)
             finish_label = {
@@ -620,9 +594,13 @@ class SidebarPanel(QWidget):
                 K_GF_RELEASE: "Terminer la release (merge main + develop, tag)",
                 K_GF_HOTFIX: "Terminer le hotfix (merge main + develop, tag)",
             }[kind]
-            menu.addAction("Checkout", lambda: self.checkout_requested.emit(full))
-            menu.addAction(finish_label, lambda: self.gitflow_finish_requested.emit(kind, data))
-            menu.addAction("Supprimer la branche", lambda: self._confirm_delete_branch(full))
+            menu.addAction(app_icon("checkout"), "Checkout", lambda: self.checkout_requested.emit(full))
+            menu.addAction(
+                app_icon("merge"), finish_label, lambda: self.gitflow_finish_requested.emit(kind, data)
+            )
+            menu.addAction(
+                app_icon("clear"), "Supprimer la branche", lambda: self._confirm_delete_branch(full)
+            )
         else:
             return
 
