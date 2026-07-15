@@ -29,6 +29,7 @@ def main() -> int:
         window.open_repo(sys.argv[1])
 
     window.show()
+    window.start_update_check()
     return app.exec()
 
 

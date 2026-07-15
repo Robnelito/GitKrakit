@@ -46,6 +46,7 @@ from gitkrakit.ui.panels import (
     StagingPanel,
     TerminalDock,
 )
+from gitkrakit.ui.updater import UpdateBanner, UpdaterController
 from gitkrakit.workspace import WorkspaceError, WorkspaceManager
 
 AUTO_FETCH_INTERVAL_MS = 5 * 60 * 1000  # 5 minutes
@@ -97,6 +98,8 @@ class MainWindow(QMainWindow):
         self._build_terminal_dock()
         self._build_menus()
         self._build_status_bar()
+        self._updater = UpdaterController(self)
+        self._connect_updater()
         self.setWindowIcon(icons.app_icon("repo", theme.ACCENT, 32))
 
         self._auto_fetch_timer = QTimer(self)
@@ -337,6 +340,8 @@ class MainWindow(QMainWindow):
         self._quit_action.setIcon(icons.app_icon("close"))
         self._toolbar_toggle_action.setIcon(icons.app_icon("toolbar"))
         self._terminal_toggle_action.setIcon(icons.app_icon("terminal"))
+        self._check_updates_action.setIcon(icons.app_icon("refresh"))
+        self._update_banner.apply_theme()
 
         self._welcome_title.setStyleSheet(
             f"color: {theme.TEXT}; font-size: 28pt; font-weight: 700;"
@@ -464,7 +469,14 @@ class MainWindow(QMainWindow):
         splitter.addWidget(right_panel)
         splitter.setSizes([230, 720, 330])
 
-        self.setCentralWidget(splitter)
+        self._update_banner = UpdateBanner()
+        central = QWidget()
+        central_layout = QVBoxLayout(central)
+        central_layout.setContentsMargins(0, 0, 0, 0)
+        central_layout.setSpacing(0)
+        central_layout.addWidget(self._update_banner)
+        central_layout.addWidget(splitter, stretch=1)
+        self.setCentralWidget(central)
 
     def _build_welcome_page(self) -> QWidget:
         page = QWidget()
@@ -584,6 +596,13 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self._toolbar_toggle_action)
         view_menu.addAction(self._terminal_toggle_action)
 
+        help_menu = self.menuBar().addMenu("&Aide")
+        self._check_updates_action = QAction(
+            icons.app_icon("refresh"), "Rechercher des mises à jour…", self
+        )
+        self._check_updates_action.triggered.connect(self.check_for_updates)
+        help_menu.addAction(self._check_updates_action)
+
     def _build_status_bar(self) -> None:
         self._busy_label = QLabel("")
         self._busy_label.setStyleSheet(f"color: {theme.TEXT}; padding-left: 8px;")
@@ -600,6 +619,59 @@ class MainWindow(QMainWindow):
         self._version_label = QLabel(f"v{__version__}")
         self._version_label.setStyleSheet(f"color: {theme.TEXT_MUTED}; padding: 0 8px;")
         self.statusBar().addPermanentWidget(self._version_label)
+
+    # ------------------------------------------------------------------
+    # Mises à jour de l'application
+    # ------------------------------------------------------------------
+    def _connect_updater(self) -> None:
+        self._updater.update_available.connect(self._update_banner.show_available)
+        self._updater.no_update.connect(self._on_no_update)
+        self._updater.check_failed.connect(self._on_update_check_failed)
+        self._updater.unavailable.connect(self._on_updater_unavailable)
+        self._updater.download_progress.connect(self._update_banner.set_progress)
+        self._updater.download_failed.connect(self._on_update_download_failed)
+        self._updater.install_ready.connect(self._on_update_install_ready)
+        self._update_banner.update_requested.connect(self._start_update_download)
+
+    def start_update_check(self) -> None:
+        """Check shortly after startup without delaying the first paint."""
+        QTimer.singleShot(1500, lambda: self._updater.check(manual=False))
+
+    def check_for_updates(self) -> None:
+        self.statusBar().showMessage("Recherche de mises à jour…")
+        if not self._updater.check(manual=True):
+            self.statusBar().showMessage("La vérification est déjà en cours.", 3000)
+
+    def _start_update_download(self) -> None:
+        self._update_banner.show_downloading()
+        self._updater.download()
+
+    def _on_no_update(self, manual: bool) -> None:
+        if manual:
+            self.statusBar().showMessage("GitKrakit est à jour.", 4000)
+
+    def _on_update_check_failed(self, manual: bool) -> None:
+        if manual:
+            self.statusBar().showMessage(
+                "Impossible de vérifier les mises à jour pour le moment.", 5000
+            )
+
+    def _on_updater_unavailable(self, manual: bool) -> None:
+        if manual:
+            self.statusBar().showMessage(
+                "La mise à jour automatique est disponible dans l'application installée.",
+                5000,
+            )
+
+    def _on_update_download_failed(self, _message: str) -> None:
+        self._update_banner.show_retry()
+        self.statusBar().showMessage(
+            "Téléchargement interrompu ; aucun fichier installé n'a été modifié.", 5000
+        )
+
+    def _on_update_install_ready(self) -> None:
+        self._update_banner.show_installing()
+        QTimer.singleShot(150, self._updater.install_and_restart)
 
     # ------------------------------------------------------------------
     # Ouverture de dépôt

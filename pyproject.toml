@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gitkrakit"
-version = "0.1.0"
+dynamic = ["version"]
 description = "A compact desktop Git client built with PySide6 and GitPython"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -16,6 +16,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+release = [
+    "PyUpdater==4.0",
+    "PyInstaller==6.21.0",
+]
 
 [project.scripts]
 gitkrakit = "main:main"
@@ -25,6 +29,9 @@ py-modules = ["main"]
 
 [tool.setuptools.packages.find]
 include = ["gitkrakit*"]
+
+[tool.setuptools.dynamic]
+version = {attr = "gitkrakit.__version__"}
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

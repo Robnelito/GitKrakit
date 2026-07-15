@@ -6,3 +6,8 @@ venv/
 build/
 dist/
 *.egg-info/
+.pyupdater/
+pyu-data/new/
+pyu-data/files/
+pyu-data/deploy/
+*.pyu
