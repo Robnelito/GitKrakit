@@ -18,7 +18,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFont
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 
 from gitkrakit import theme
 from gitkrakit.core import GitFlowStatus
+from gitkrakit.ui.icons import app_icon
 from gitkrakit.workspace import WorkspaceError, WorkspaceManager
 
 _KIND_ROLE = Qt.UserRole
@@ -66,43 +67,56 @@ def _same_path(a: str, b: str) -> bool:
 
 def _make_tree() -> QTreeWidget:
     tree = QTreeWidget()
+    tree.setObjectName("sidebarTree")
     tree.setColumnCount(2)
     tree.setHeaderHidden(True)
     tree.setRootIsDecorated(True)
     tree.setUniformRowHeights(True)
     tree.setAnimated(True)
+    tree.setIndentation(17)
+    tree.setIconSize(QSize(16, 16))
+    tree.setTextElideMode(Qt.ElideRight)
+    tree.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
     # colonne 0 (nom) extensible, colonne 1 (compteur) étroite et fixe
     tree.header().setStretchLastSection(False)
     tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
     tree.header().setSectionResizeMode(1, QHeaderView.Fixed)
-    tree.header().resizeSection(1, 52)
+    tree.header().resizeSection(1, 58)
     return tree
 
 
 def _group_header(text: str, accent: str) -> QWidget:
-    """Bandeau de titre d'une zone (DÉPÔTS / OBJETS GIT) : une barre
-    verticale de couleur + le libellé, pour marquer visuellement la
-    frontière entre gestion de répertoires et gestion d'objets Git."""
+    """Compact title row separating repositories from Git references."""
     header = QWidget()
-    header.setStyleSheet(f"background-color: {theme.PANEL_BG};")
+    header.setObjectName("sidebarGroupHeader")
     layout = QHBoxLayout(header)
-    layout.setContentsMargins(8, 5, 8, 5)
-    layout.setSpacing(6)
+    layout.setContentsMargins(12, 9, 10, 6)
+    layout.setSpacing(8)
 
-    bar = QLabel()
-    bar.setFixedWidth(3)
-    bar.setStyleSheet(f"background-color: {accent}; border-radius: 1px;")
-    layout.addWidget(bar)
+    dot = QLabel()
+    dot.setObjectName("sidebarAccentDot")
+    dot.setFixedSize(5, 5)
+    dot.setStyleSheet(f"background-color: {accent}; border-radius: 2px;")
+    layout.addWidget(dot, alignment=Qt.AlignVCenter)
 
-    label = QLabel(text.upper())
-    font = QFont("Segoe UI", 8)
-    font.setBold(True)
-    font.setLetterSpacing(QFont.PercentageSpacing, 105)
+    label = QLabel(text)
+    label.setObjectName("sidebarGroupTitle")
+    font = QFont(theme.UI_FONT_FAMILY, 9)
+    font.setWeight(QFont.DemiBold)
     label.setFont(font)
     label.setStyleSheet(f"color: {theme.TEXT}; background: transparent;")
     layout.addWidget(label)
     layout.addStretch(1)
     return header
+
+
+def _style_group_header(header: QWidget, accent: str) -> None:
+    dot = header.findChild(QLabel, "sidebarAccentDot")
+    label = header.findChild(QLabel, "sidebarGroupTitle")
+    if dot is not None:
+        dot.setStyleSheet(f"background-color: {accent}; border-radius: 2px;")
+    if label is not None:
+        label.setStyleSheet(f"color: {theme.TEXT}; background: transparent;")
 
 
 class SidebarPanel(QWidget):
@@ -130,6 +144,7 @@ class SidebarPanel(QWidget):
         layout.setSpacing(4)
 
         self.filter_edit = QLineEdit()
+        self.filter_edit.setObjectName("sidebarFilter")
         self.filter_edit.setPlaceholderText("Filtrer…")
         self.filter_edit.setClearButtonEnabled(True)
         self.filter_edit.setAccessibleName("Filtrer la barre latérale")
@@ -138,7 +153,7 @@ class SidebarPanel(QWidget):
         self.filter_edit.textChanged.connect(self._apply_filter)
         margin_wrap = QWidget()
         margin_layout = QVBoxLayout(margin_wrap)
-        margin_layout.setContentsMargins(6, 6, 6, 0)
+        margin_layout.setContentsMargins(10, 10, 10, 4)
         margin_layout.addWidget(self.filter_edit)
         layout.addWidget(margin_wrap)
 
@@ -147,7 +162,8 @@ class SidebarPanel(QWidget):
         repos_layout = QVBoxLayout(repos_widget)
         repos_layout.setContentsMargins(0, 0, 0, 0)
         repos_layout.setSpacing(0)
-        repos_layout.addWidget(_group_header("Dépôts", theme.ACCENT))
+        self._repos_header = _group_header("Dépôts", theme.ACCENT)
+        repos_layout.addWidget(self._repos_header)
         self.repos_tree = _make_tree()
         self.repos_tree.setAccessibleName("Dépôts et espaces de travail")
         self.repos_tree.setToolTip("Double-clique un dépôt pour l'ouvrir")
@@ -163,7 +179,8 @@ class SidebarPanel(QWidget):
         refs_layout = QVBoxLayout(refs_widget)
         refs_layout.setContentsMargins(0, 0, 0, 0)
         refs_layout.setSpacing(0)
-        refs_layout.addWidget(_group_header("Objets Git", theme.LANE_COLORS[0]))
+        self._refs_header = _group_header("Branches et tags", theme.LANE_COLORS[0])
+        refs_layout.addWidget(self._refs_header)
         self.refs_tree = _make_tree()
         self.refs_tree.setAccessibleName("Branches, tags et Git Flow")
         self.refs_tree.setToolTip("Double-clique une branche locale pour l'extraire")
@@ -174,13 +191,26 @@ class SidebarPanel(QWidget):
         )
         refs_layout.addWidget(self.refs_tree)
 
-        splitter = QSplitter(Qt.Vertical)
-        splitter.addWidget(repos_widget)
-        splitter.addWidget(refs_widget)
-        splitter.setSizes([180, 420])
-        splitter.setStyleSheet(f"QSplitter::handle {{ background-color: {theme.BORDER}; }}")
-        layout.addWidget(splitter, stretch=1)
+        self._splitter = QSplitter(Qt.Vertical)
+        self._splitter.addWidget(repos_widget)
+        self._splitter.addWidget(refs_widget)
+        self._splitter.setChildrenCollapsible(False)
+        self._splitter.setStretchFactor(0, 0)
+        self._splitter.setStretchFactor(1, 1)
+        self._splitter.setSizes([180, 420])
+        self._splitter.setStyleSheet(
+            f"QSplitter::handle {{ background-color: {theme.BORDER}; }}"
+        )
+        layout.addWidget(self._splitter, stretch=1)
 
+        self.refresh()
+
+    def apply_theme(self) -> None:
+        _style_group_header(self._repos_header, theme.ACCENT)
+        _style_group_header(self._refs_header, theme.LANE_COLORS[0])
+        self._splitter.setStyleSheet(
+            f"QSplitter::handle {{ background-color: {theme.BORDER}; }}"
+        )
         self.refresh()
 
     # ------------------------------------------------------------------
@@ -228,6 +258,7 @@ class SidebarPanel(QWidget):
         for workspace in self._manager.workspaces:
             ws_item = QTreeWidgetItem([workspace.name, ""])
             ws_item.setData(0, _KIND_ROLE, K_WORKSPACE)
+            ws_item.setIcon(0, app_icon("workspace", theme.TEXT_MUTED, 16))
             ws_section.addChild(ws_item)
             for repo_path in workspace.repos:
                 item = self._repo_item(repo_path, K_REPO)
@@ -276,7 +307,7 @@ class SidebarPanel(QWidget):
         status = self._gitflow
 
         if status is None:
-            section = self._add_section(tree, "Gitflow", 0)
+            section = self._add_section(tree, "Git Flow", 0)
             section.setData(0, _KIND_ROLE, K_SECTION_GITFLOW)
             init_item = QTreeWidgetItem(["Initialiser Git Flow…", ""])
             init_item.setData(0, _KIND_ROLE, K_GITFLOW_INIT)
@@ -285,13 +316,14 @@ class SidebarPanel(QWidget):
             return
 
         total = len(status.features) + len(status.releases) + len(status.hotfixes)
-        section = self._add_section(tree, "Gitflow", total)
+        section = self._add_section(tree, "Git Flow", total)
         section.setData(0, _KIND_ROLE, K_SECTION_GITFLOW)
 
         for branch in (status.config.develop, status.config.main):
             item = QTreeWidgetItem([branch, ""])
             item.setData(0, _KIND_ROLE, K_LOCAL_BRANCH)
             item.setData(0, _DATA_ROLE, branch)
+            item.setIcon(0, app_icon("branch", theme.TEXT_MUTED, 16))
             self._mark_if_current(item, branch)
             self._set_sync_badge(item, branch)
             section.addChild(item)
@@ -310,6 +342,7 @@ class SidebarPanel(QWidget):
                 child = QTreeWidgetItem([name, ""])
                 child.setData(0, _KIND_ROLE, kind)
                 child.setData(0, _DATA_ROLE, name)
+                child.setIcon(0, app_icon("branch", theme.TEXT_MUTED, 16))
                 full_name = self._gitflow_full_name(kind, name)
                 self._mark_if_current(child, full_name)
                 self._set_sync_badge(child, full_name)
@@ -352,6 +385,9 @@ class SidebarPanel(QWidget):
             item = QTreeWidgetItem([label, ""])
             item.setData(0, _KIND_ROLE, kind)
             item.setData(0, _DATA_ROLE, full_name)
+            icon_kind = "tag" if kind == K_TAG else "branch"
+            icon_color = theme.LANE_COLORS[6] if kind == K_REMOTE_BRANCH else theme.TEXT_MUTED
+            item.setIcon(0, app_icon(icon_kind, icon_color, 16))
             if mark_current:
                 self._mark_if_current(item, full_name)
                 self._set_sync_badge(item, full_name)
@@ -380,7 +416,7 @@ class SidebarPanel(QWidget):
         True si c'était le cas, pour que l'appelant sache où défiler."""
         if self._active_repo_path is None or not _same_path(repo_path, self._active_repo_path):
             return False
-        item.setText(0, f"● {item.text(0)}")
+        item.setIcon(0, app_icon("repo", theme.ACCENT, 16))
         item.setForeground(0, QBrush(QColor(theme.ACCENT)))
         font = item.font(0)
         font.setBold(True)
@@ -394,11 +430,16 @@ class SidebarPanel(QWidget):
 
     def _mark_if_current(self, item: QTreeWidgetItem, branch: str) -> None:
         if branch == self._current_branch:
-            item.setText(0, f"✓ {item.text(0)}")
+            item.setIcon(0, app_icon("branch", theme.ACCENT, 16))
             item.setForeground(0, QBrush(QColor(theme.ACCENT)))
             font = item.font(0)
             font.setBold(True)
             item.setFont(0, font)
+            tint = QColor(theme.ACCENT)
+            tint.setAlpha(20)
+            item.setBackground(0, QBrush(tint))
+            item.setBackground(1, QBrush(tint))
+            item.setToolTip(0, f"{branch} — branche actuelle")
 
     def _set_sync_badge(self, item: QTreeWidgetItem, branch_name: str) -> None:
         """Ajoute, dans la colonne de droite, un indicateur ↓N/↑N quand la
@@ -434,9 +475,9 @@ class SidebarPanel(QWidget):
 
     @staticmethod
     def _add_section(tree: QTreeWidget, title: str, count: int) -> QTreeWidgetItem:
-        item = QTreeWidgetItem([title.upper(), str(count) if count else ""])
-        font = QFont("Segoe UI", 8)
-        font.setBold(True)
+        item = QTreeWidgetItem([title, str(count) if count else ""])
+        font = QFont(theme.UI_FONT_FAMILY, 8)
+        font.setWeight(QFont.DemiBold)
         item.setFont(0, font)
         item.setForeground(0, QBrush(QColor(theme.TEXT_MUTED)))
         item.setFont(1, font)
@@ -449,6 +490,7 @@ class SidebarPanel(QWidget):
     @staticmethod
     def _repo_item(repo_path: str, kind: str) -> QTreeWidgetItem:
         item = QTreeWidgetItem([Path(repo_path).name or repo_path, ""])
+        item.setIcon(0, app_icon("repo", theme.TEXT_MUTED, 16))
         item.setToolTip(0, repo_path)
         item.setData(0, _KIND_ROLE, kind)
         item.setData(0, _DATA_ROLE, repo_path)
@@ -500,39 +542,51 @@ class SidebarPanel(QWidget):
         data = item.data(0, _DATA_ROLE) if item else None
 
         if kind == K_SECTION_WORKSPACES or (item is None and tree is self.repos_tree):
-            menu.addAction("Nouvel espace de travail…", self._create_workspace)
+            menu.addAction(app_icon("plus"), "Nouvel espace de travail…", self._create_workspace)
         elif kind == K_WORKSPACE:
             name = item.text(0)
-            menu.addAction("Ajouter un dépôt…", lambda: self._add_repo(name))
-            menu.addAction("Renommer…", lambda: self._rename_workspace(name))
-            menu.addAction("Supprimer l'espace", lambda: self._delete_workspace(name))
+            menu.addAction(app_icon("plus"), "Ajouter un dépôt…", lambda: self._add_repo(name))
+            menu.addAction(app_icon("rename"), "Renommer…", lambda: self._rename_workspace(name))
+            menu.addAction(
+                app_icon("clear"), "Supprimer l'espace", lambda: self._delete_workspace(name)
+            )
         elif kind == K_REPO:
             workspace_name = item.parent().text(0)
-            menu.addAction("Ouvrir", lambda: self.open_repo_requested.emit(data))
+            menu.addAction(app_icon("open"), "Ouvrir", lambda: self.open_repo_requested.emit(data))
             menu.addAction(
+                app_icon("remove"),
                 "Retirer de l'espace",
                 lambda: self._try(lambda: self._manager.remove_repo(workspace_name, data)),
             )
         elif kind == K_RECENT:
-            menu.addAction("Ouvrir", lambda: self.open_repo_requested.emit(data))
+            menu.addAction(app_icon("open"), "Ouvrir", lambda: self.open_repo_requested.emit(data))
         elif kind == K_LOCAL_BRANCH:
-            menu.addAction("Checkout", lambda: self.checkout_requested.emit(data))
-            menu.addAction("Supprimer la branche", lambda: self._confirm_delete_branch(data))
+            menu.addAction(app_icon("checkout"), "Checkout", lambda: self.checkout_requested.emit(data))
+            menu.addAction(
+                app_icon("clear"), "Supprimer la branche", lambda: self._confirm_delete_branch(data)
+            )
         elif kind == K_SECTION_GITFLOW:
             if self._gitflow is None:
-                menu.addAction("Initialiser Git Flow…", self.gitflow_init_requested.emit)
+                menu.addAction(
+                    app_icon("gitflow"), "Initialiser Git Flow…", self.gitflow_init_requested.emit
+                )
             else:
                 menu.addAction(
+                    app_icon("plus"),
                     "Démarrer une feature…", lambda: self.gitflow_start_requested.emit(K_GF_FEATURE)
                 )
                 menu.addAction(
+                    app_icon("plus"),
                     "Démarrer une release…", lambda: self.gitflow_start_requested.emit(K_GF_RELEASE)
                 )
                 menu.addAction(
+                    app_icon("plus"),
                     "Démarrer un hotfix…", lambda: self.gitflow_start_requested.emit(K_GF_HOTFIX)
                 )
         elif kind == K_GITFLOW_INIT:
-            menu.addAction("Initialiser Git Flow…", self.gitflow_init_requested.emit)
+            menu.addAction(
+                app_icon("gitflow"), "Initialiser Git Flow…", self.gitflow_init_requested.emit
+            )
         elif kind in (K_GF_FEATURE, K_GF_RELEASE, K_GF_HOTFIX):
             full = self._gitflow_full_name(kind, data)
             finish_label = {
@@ -540,9 +594,13 @@ class SidebarPanel(QWidget):
                 K_GF_RELEASE: "Terminer la release (merge main + develop, tag)",
                 K_GF_HOTFIX: "Terminer le hotfix (merge main + develop, tag)",
             }[kind]
-            menu.addAction("Checkout", lambda: self.checkout_requested.emit(full))
-            menu.addAction(finish_label, lambda: self.gitflow_finish_requested.emit(kind, data))
-            menu.addAction("Supprimer la branche", lambda: self._confirm_delete_branch(full))
+            menu.addAction(app_icon("checkout"), "Checkout", lambda: self.checkout_requested.emit(full))
+            menu.addAction(
+                app_icon("merge"), finish_label, lambda: self.gitflow_finish_requested.emit(kind, data)
+            )
+            menu.addAction(
+                app_icon("clear"), "Supprimer la branche", lambda: self._confirm_delete_branch(full)
+            )
         else:
             return
 

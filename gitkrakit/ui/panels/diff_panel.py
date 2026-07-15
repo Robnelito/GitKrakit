@@ -26,23 +26,26 @@ from gitkrakit.ui.syntax import detect_language, highlight_line
 
 _COL_OLD_NO, _COL_OLD_TEXT, _COL_NEW_NO, _COL_NEW_TEXT = range(4)
 
-_DEL_BG = QColor(theme.STATUS_COLORS["deleted"])
-_DEL_BG.setAlpha(35)
-_ADD_BG = QColor(theme.STATUS_COLORS["added"])
-_ADD_BG.setAlpha(35)
+def _diff_background(status: str) -> QColor:
+    color = QColor(theme.STATUS_COLORS[status])
+    color.setAlpha(35)
+    return color
 
 
 class DiffPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._language: str | None = None
+        self._current_title = "Clique un fichier pour voir son diff"
+        self._current_diff_text = ""
+        self._current_file_path = ""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(6)
 
         self.title_label = QLabel("Clique un fichier pour voir son diff")
         self.title_label.setStyleSheet(
-            f"color: {theme.TEXT_MUTED}; font-family: Consolas, monospace;"
+            f"color: {theme.TEXT_MUTED}; font-family: '{theme.MONO_FONT_FAMILY}', monospace;"
         )
         self.title_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.summary_label = QLabel("")
@@ -78,13 +81,34 @@ class DiffPanel(QWidget):
         self.table.setColumnWidth(_COL_NEW_NO, 46)
         self.table.verticalHeader().setDefaultSectionSize(20)
 
-        self._mono_font = QFont("Consolas", 9)
-        self._mono_font_bold = QFont("Consolas", 9)
+        self._mono_font = QFont(theme.MONO_FONT_FAMILY, 9)
+        self._mono_font_bold = QFont(theme.MONO_FONT_FAMILY, 9)
         self._mono_font_bold.setBold(True)
 
         layout.addWidget(self.table, stretch=1)
 
+    def apply_theme(self) -> None:
+        self.title_label.setStyleSheet(
+            f"color: {theme.TEXT_MUTED}; font-family: '{theme.MONO_FONT_FAMILY}', monospace;"
+        )
+        self._mono_font.setFamily(theme.MONO_FONT_FAMILY)
+        self._mono_font_bold.setFamily(theme.MONO_FONT_FAMILY)
+        self.summary_label.setStyleSheet(f"color: {theme.TEXT_MUTED}; font-size: 9pt;")
+        self.table.setStyleSheet(
+            f"QTableWidget {{ background-color: {theme.BACKGROUND}; border: 1px solid {theme.BORDER}; "
+            "border-radius: 6px; gridline-color: transparent; }"
+            "QTableWidget::item { padding: 0px 6px; }"
+        )
+        self.show_diff(
+            self._current_title,
+            self._current_diff_text,
+            self._current_file_path,
+        )
+
     def show_diff(self, title: str, diff_text: str, file_path: str = "") -> None:
+        self._current_title = title
+        self._current_diff_text = diff_text
+        self._current_file_path = file_path
         self.title_label.setText(title)
         self._language = detect_language(file_path) if file_path else None
         rows = parse_unified_diff(diff_text) if diff_text else []
@@ -112,8 +136,8 @@ class DiffPanel(QWidget):
                 self._set_cell(i, col, "", theme.TEXT)
             return
 
-        left_bg = _DEL_BG if row.kind in ("del", "mod") else None
-        right_bg = _ADD_BG if row.kind in ("add", "mod") else None
+        left_bg = _diff_background("deleted") if row.kind in ("del", "mod") else None
+        right_bg = _diff_background("added") if row.kind in ("add", "mod") else None
 
         self._set_cell(i, _COL_OLD_NO, str(row.old_no) if row.old_no else "", theme.TEXT_MUTED, bg=left_bg)
         self._set_cell(i, _COL_NEW_NO, str(row.new_no) if row.new_no else "", theme.TEXT_MUTED, bg=right_bg)

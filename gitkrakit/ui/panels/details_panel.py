@@ -32,7 +32,7 @@ class DetailsPanel(QWidget):
 
         self.sha_label = QLabel("Sélectionne un commit dans le graphe")
         self.sha_label.setStyleSheet(
-            f"color: {theme.TEXT_MUTED}; font-family: Consolas, monospace;"
+            f"color: {theme.TEXT_MUTED}; font-family: '{theme.MONO_FONT_FAMILY}', monospace;"
         )
         self.sha_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addWidget(self.sha_label)
@@ -59,7 +59,7 @@ class DetailsPanel(QWidget):
 
         self.parents_label = QLabel("")
         self.parents_label.setStyleSheet(
-            f"color: {theme.TEXT_MUTED}; font-family: Consolas, monospace;"
+            f"color: {theme.TEXT_MUTED}; font-family: '{theme.MONO_FONT_FAMILY}', monospace;"
         )
         self.parents_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addWidget(self.parents_label)
@@ -72,6 +72,24 @@ class DetailsPanel(QWidget):
         self.files_list.setToolTip("Clique un fichier pour afficher son diff")
         self.files_list.itemClicked.connect(self._on_file_clicked)
         layout.addWidget(self.files_list, stretch=1)
+
+    def apply_theme(self) -> None:
+        self.sha_label.setStyleSheet(
+            f"color: {theme.TEXT_MUTED}; font-family: '{theme.MONO_FONT_FAMILY}', monospace;"
+        )
+        self.message_frame.setStyleSheet(
+            f"background-color: {theme.PANEL_BG}; border: 1px solid {theme.BORDER};"
+            "border-radius: 6px;"
+        )
+        self.message_label.setStyleSheet(
+            f"color: {theme.TEXT}; font-size: 11pt; background: transparent; border: none;"
+        )
+        self.parents_label.setStyleSheet(
+            f"color: {theme.TEXT_MUTED}; font-family: '{theme.MONO_FONT_FAMILY}', monospace;"
+        )
+        for index in range(self.files_list.count()):
+            item = self.files_list.item(index)
+            item.setIcon(status_icon(item.toolTip()))
 
     def _on_file_clicked(self, item: QListWidgetItem) -> None:
         if self._current_sha:

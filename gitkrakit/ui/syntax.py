@@ -140,13 +140,14 @@ _EXTENSION_MAP: dict[str, str] = {
     ".css": "css", ".scss": "css", ".less": "css",
 }
 
-_COLORS = {
-    "comment": theme.TEXT_MUTED,
-    "string": theme.LANE_COLORS[5],    # jaune
-    "number": theme.LANE_COLORS[6],    # cyan
-    "decorator": theme.LANE_COLORS[2],  # orange
-    "keyword": theme.LANE_COLORS[4],   # violet
-}
+def _syntax_colors() -> dict[str, str]:
+    return {
+        "comment": theme.TEXT_MUTED,
+        "string": theme.LANE_COLORS[5],
+        "number": theme.LANE_COLORS[6],
+        "decorator": theme.LANE_COLORS[2],
+        "keyword": theme.LANE_COLORS[4],
+    }
 
 
 def detect_language(path: str) -> str | None:
@@ -195,11 +196,12 @@ def highlight_line(text: str, language: str | None) -> str:
         return _escape(text)
 
     html_parts: list[str] = []
+    colors = _syntax_colors()
     last_end = 0
     for match in pattern.finditer(text):
         if match.start() > last_end:
             html_parts.append(_escape(text[last_end : match.start()]))
-        color = _COLORS.get(match.lastgroup)
+        color = colors.get(match.lastgroup)
         token = _escape(match.group())
         html_parts.append(f'<span style="color:{color}">{token}</span>' if color else token)
         last_end = match.end()
