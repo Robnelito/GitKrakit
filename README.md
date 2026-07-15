@@ -103,12 +103,11 @@ Ne jamais afficher cette valeur, la placer dans un artefact Actions, ni ajouter
 
 ### Couper une version
 
-1. Ouvrir **Actions → Release GitKrakit update → Run workflow**, puis conserver
-   la branche `main`. Le workflow refuse explicitement toute autre branche.
-2. Saisir la nouvelle version au format `MAJOR.MINOR.PATCH`, par exemple
-   `1.0.1`.
-3. Le workflow met à jour `gitkrakit.__version__`, exécute les tests, crée le
-   commit de version, lance `pyupdater build`, signe via
+1. Mettre à jour `gitkrakit.__version__` au format `MAJOR.MINOR.PATCH`, par
+   exemple `1.0.1`, puis inclure ce changement dans le commit à publier.
+2. Pousser le commit sur `main`.
+3. Le push déclenche automatiquement le workflow : il lit la version depuis
+   `gitkrakit.__version__`, exécute les tests, lance `pyupdater build`, signe via
    `pyupdater pkg --process --sign`, construit l'installateur puis publie les
    fichiers sur la release fixe `latest-updates`.
 

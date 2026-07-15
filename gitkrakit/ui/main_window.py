@@ -784,8 +784,25 @@ class MainWindow(QMainWindow):
         if self._is_busy:
             return
         try:
-            self.backend.delete_branch(name)
+            self.backend.delete_branch(name, force=force)
         except GitBackendError as exc:
+            # git refuse par sécurité de supprimer une branche non fusionnée ;
+            # on propose de forcer plutôt que de laisser un message sans issue
+            if not force and "not fully merged" in str(exc):
+                answer = QMessageBox.warning(
+                    self,
+                    "Branche non fusionnée",
+                    f"La branche '{name}' contient des commits qui ne sont fusionnés "
+                    "dans aucune autre branche.\n\n"
+                    "Si tu la supprimes quand même, ces commits deviendront orphelins "
+                    "(récupérables un temps via le reflog, mais pas depuis le graphe).\n\n"
+                    "Forcer la suppression ?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No,
+                )
+                if answer == QMessageBox.Yes:
+                    self._delete_branch(name, force=True)
+                return
             QMessageBox.critical(self, "Erreur", str(exc))
             return
         self.refresh_all()
