@@ -34,6 +34,7 @@ class DetailsPanel(QWidget):
         self.sha_label.setStyleSheet(
             f"color: {theme.TEXT_MUTED}; font-family: Consolas, monospace;"
         )
+        self.sha_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addWidget(self.sha_label)
 
         self.message_frame = QFrame()
@@ -52,18 +53,23 @@ class DetailsPanel(QWidget):
         layout.addWidget(self.message_frame)
 
         self.author_label = QLabel("")
+        self.author_label.setWordWrap(True)
+        self.author_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addWidget(self.author_label)
 
         self.parents_label = QLabel("")
         self.parents_label.setStyleSheet(
             f"color: {theme.TEXT_MUTED}; font-family: Consolas, monospace;"
         )
+        self.parents_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addWidget(self.parents_label)
 
         self.files_label = QLabel("")
         layout.addWidget(self.files_label)
 
         self.files_list = QListWidget()
+        self.files_list.setAccessibleName("Fichiers modifiés par le commit")
+        self.files_list.setToolTip("Clique un fichier pour afficher son diff")
         self.files_list.itemClicked.connect(self._on_file_clicked)
         layout.addWidget(self.files_list, stretch=1)
 
@@ -73,14 +79,15 @@ class DetailsPanel(QWidget):
 
     def show_commit(self, commit: CommitInfo, files: list[FileStatus]) -> None:
         self._current_sha = commit.sha
-        self.sha_label.setText(f"commit : {commit.short_sha}")
+        self.sha_label.setText(f"COMMIT {commit.short_sha}")
+        self.sha_label.setToolTip(commit.sha)
         self.message_label.setText(commit.message)
         self.message_frame.show()
         self.author_label.setText(
             f"{commit.author} <{commit.author_email}> — {commit.date:%d/%m/%Y @ %H:%M}"
         )
         parents = ", ".join(p[:7] for p in commit.parents) or "(racine)"
-        self.parents_label.setText(f"parents : {parents}")
+        self.parents_label.setText(f"Parents : {parents}")
 
         refs = f" · {', '.join(commit.refs)}" if commit.refs else ""
         self.files_label.setText(f"{len(files)} fichier(s) modifié(s){refs}")

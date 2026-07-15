@@ -69,6 +69,8 @@ def _make_tree() -> QTreeWidget:
     tree.setColumnCount(2)
     tree.setHeaderHidden(True)
     tree.setRootIsDecorated(True)
+    tree.setUniformRowHeights(True)
+    tree.setAnimated(True)
     # colonne 0 (nom) extensible, colonne 1 (compteur) étroite et fixe
     tree.header().setStretchLastSection(False)
     tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
@@ -129,6 +131,9 @@ class SidebarPanel(QWidget):
 
         self.filter_edit = QLineEdit()
         self.filter_edit.setPlaceholderText("Filtrer…")
+        self.filter_edit.setClearButtonEnabled(True)
+        self.filter_edit.setAccessibleName("Filtrer la barre latérale")
+        self.filter_edit.setToolTip("Filtrer simultanément les dépôts, branches et tags")
         self.filter_edit.setContentsMargins(0, 0, 0, 0)
         self.filter_edit.textChanged.connect(self._apply_filter)
         margin_wrap = QWidget()
@@ -144,6 +149,8 @@ class SidebarPanel(QWidget):
         repos_layout.setSpacing(0)
         repos_layout.addWidget(_group_header("Dépôts", theme.ACCENT))
         self.repos_tree = _make_tree()
+        self.repos_tree.setAccessibleName("Dépôts et espaces de travail")
+        self.repos_tree.setToolTip("Double-clique un dépôt pour l'ouvrir")
         self.repos_tree.itemDoubleClicked.connect(self._on_double_click)
         self.repos_tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.repos_tree.customContextMenuRequested.connect(
@@ -158,6 +165,8 @@ class SidebarPanel(QWidget):
         refs_layout.setSpacing(0)
         refs_layout.addWidget(_group_header("Objets Git", theme.LANE_COLORS[0]))
         self.refs_tree = _make_tree()
+        self.refs_tree.setAccessibleName("Branches, tags et Git Flow")
+        self.refs_tree.setToolTip("Double-clique une branche locale pour l'extraire")
         self.refs_tree.itemDoubleClicked.connect(self._on_double_click)
         self.refs_tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.refs_tree.customContextMenuRequested.connect(

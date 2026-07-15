@@ -1,6 +1,7 @@
 """Couche métier : accès Git et mise en page du graphe (aucune dépendance Qt)."""
 
 from gitkrakit.core.diff_parser import DiffRow, parse_unified_diff
+from gitkrakit.core.command_parser import split_command
 from gitkrakit.core.git_backend import (
     CommitInfo,
     FileStatus,
@@ -22,4 +23,5 @@ __all__ = [
     "GraphLayout",
     "GraphNode",
     "parse_unified_diff",
+    "split_command",
 ]

@@ -8,11 +8,13 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QComboBox,
+    QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QPlainTextEdit,
     QPushButton,
-    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -26,47 +28,94 @@ class StagingPanel(QWidget):
     unstage_requested = Signal(list)    # list[str] : chemins à désindexer
     commit_requested = Signal(str)      # message de commit
     diff_requested = Signal(str, bool)  # (chemin, staged) : voir le diff
+    generate_message_requested = Signal(str)  # fournisseur ACP : codex | claude
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._staged_count = 0
         layout = QVBoxLayout(self)
+        layout.setSpacing(8)
 
-        layout.addWidget(QLabel("Fichiers modifiés (non indexés)"))
+        self.unstaged_label = QLabel("MODIFICATIONS · 0")
+        self.unstaged_label.setToolTip("Fichiers modifiés qui ne seront pas dans le prochain commit")
+        layout.addWidget(self.unstaged_label)
         self.unstaged_list = QListWidget()
+        self.unstaged_list.setAccessibleName("Fichiers non indexés")
         self.unstaged_list.setSelectionMode(QListWidget.ExtendedSelection)
+        self.unstaged_list.setToolTip(
+            "Clique un fichier pour voir son diff. Ctrl+clic permet une sélection multiple."
+        )
         self.unstaged_list.itemClicked.connect(
             lambda item: self.diff_requested.emit(item.data(Qt.UserRole), False)
         )
+        self.unstaged_list.itemSelectionChanged.connect(self._update_buttons)
         layout.addWidget(self.unstaged_list)
 
-        stage_btn = QPushButton("Indexer (stage) →")
-        stage_btn.clicked.connect(self._emit_stage)
-        layout.addWidget(stage_btn)
+        self.stage_btn = QPushButton("Indexer la sélection →")
+        self.stage_btn.setToolTip("Ajouter les fichiers sélectionnés au prochain commit")
+        self.stage_btn.clicked.connect(self._emit_stage)
+        layout.addWidget(self.stage_btn)
 
-        layout.addWidget(QLabel("Fichiers indexés (staged)"))
+        self.staged_label = QLabel("PRÊTS À COMMITTER · 0")
+        self.staged_label.setToolTip("Fichiers inclus dans le prochain commit")
+        layout.addWidget(self.staged_label)
         self.staged_list = QListWidget()
+        self.staged_list.setAccessibleName("Fichiers indexés")
         self.staged_list.setSelectionMode(QListWidget.ExtendedSelection)
+        self.staged_list.setToolTip(
+            "Clique un fichier pour voir son diff. Ctrl+clic permet une sélection multiple."
+        )
         self.staged_list.itemClicked.connect(
             lambda item: self.diff_requested.emit(item.data(Qt.UserRole), True)
         )
+        self.staged_list.itemSelectionChanged.connect(self._update_buttons)
         layout.addWidget(self.staged_list)
 
-        unstage_btn = QPushButton("← Désindexer (unstage)")
-        unstage_btn.clicked.connect(self._emit_unstage)
-        layout.addWidget(unstage_btn)
+        self.unstage_btn = QPushButton("← Retirer la sélection")
+        self.unstage_btn.setToolTip("Retirer les fichiers sélectionnés du prochain commit")
+        self.unstage_btn.clicked.connect(self._emit_unstage)
+        layout.addWidget(self.unstage_btn)
 
-        layout.addWidget(QLabel("Message de commit"))
-        self.commit_message_edit = QTextEdit()
-        self.commit_message_edit.setFixedHeight(80)
+        layout.addWidget(QLabel("MESSAGE DU COMMIT"))
+        self.commit_message_edit = QPlainTextEdit()
+        self.commit_message_edit.setPlaceholderText("Résume clairement la modification…")
+        self.commit_message_edit.setAccessibleName("Message du commit")
+        self.commit_message_edit.setTabChangesFocus(True)
+        self.commit_message_edit.setFixedHeight(86)
+        self.commit_message_edit.textChanged.connect(self._update_buttons)
         layout.addWidget(self.commit_message_edit)
 
-        commit_btn = QPushButton("Commit")
-        commit_btn.clicked.connect(self._emit_commit)
-        layout.addWidget(commit_btn)
+        generator_row = QHBoxLayout()
+        self.agent_combo = QComboBox()
+        self.agent_combo.setAccessibleName("Agent ACP pour le message de commit")
+        self.agent_combo.setToolTip("Choisir l'agent local utilisé via ACP")
+        self.agent_combo.addItem("Codex CLI", "codex")
+        self.agent_combo.addItem("Claude Code", "claude")
+        generator_row.addWidget(self.agent_combo, stretch=1)
+
+        self.generate_btn = QPushButton("Générer via ACP")
+        self.generate_btn.setToolTip(
+            "Analyser uniquement le diff indexé et proposer un message Conventional Commit"
+        )
+        self.generate_btn.clicked.connect(self._emit_generate_message)
+        generator_row.addWidget(self.generate_btn)
+        layout.addLayout(generator_row)
+
+        self.commit_btn = QPushButton("Créer le commit")
+        self.commit_btn.setObjectName("primaryButton")
+        self.commit_btn.setShortcut("Ctrl+Return")
+        self.commit_btn.setToolTip("Créer le commit (Ctrl+Entrée)")
+        self.commit_btn.clicked.connect(self._emit_commit)
+        layout.addWidget(self.commit_btn)
+        self._update_buttons()
 
     def update_status(self, staged: list[FileStatus], unstaged: list[FileStatus]) -> None:
+        self._staged_count = len(staged)
         self._fill(self.staged_list, staged)
         self._fill(self.unstaged_list, unstaged)
+        self.staged_label.setText(f"PRÊTS À COMMITTER · {len(staged)}")
+        self.unstaged_label.setText(f"MODIFICATIONS · {len(unstaged)}")
+        self._update_buttons()
 
     @staticmethod
     def _fill(list_widget: QListWidget, files: list[FileStatus]) -> None:
@@ -79,6 +128,18 @@ class StagingPanel(QWidget):
 
     def clear_message(self) -> None:
         self.commit_message_edit.clear()
+
+    def set_commit_message(self, message: str) -> None:
+        self.commit_message_edit.setPlainText(message)
+        self.commit_message_edit.setFocus()
+        self.commit_message_edit.selectAll()
+
+    def _update_buttons(self) -> None:
+        self.stage_btn.setEnabled(bool(self.unstaged_list.selectedItems()))
+        self.unstage_btn.setEnabled(bool(self.staged_list.selectedItems()))
+        has_message = bool(self.commit_message_edit.toPlainText().strip())
+        self.commit_btn.setEnabled(self._staged_count > 0 and has_message)
+        self.generate_btn.setEnabled(self._staged_count > 0)
 
     # ------------------------------------------------------------------
     def _emit_stage(self) -> None:
@@ -93,6 +154,11 @@ class StagingPanel(QWidget):
 
     def _emit_commit(self) -> None:
         self.commit_requested.emit(self.commit_message_edit.toPlainText().strip())
+
+    def _emit_generate_message(self) -> None:
+        provider = self.agent_combo.currentData()
+        if provider:
+            self.generate_message_requested.emit(str(provider))
 
     @staticmethod
     def _selected_paths(list_widget: QListWidget) -> list[str]:

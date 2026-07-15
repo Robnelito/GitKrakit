@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QSplitter,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -407,10 +408,22 @@ class GraphPanel(QWidget):
 
         self.view = GraphView()
         self.view.commit_selected.connect(self.commit_selected)
-        layout.addWidget(self.view)
+        self.empty_label = QLabel(
+            "Ce dépôt ne contient encore aucun commit.\nCrée un premier commit depuis le panneau Staging."
+        )
+        self.empty_label.setAlignment(Qt.AlignCenter)
+        self.empty_label.setWordWrap(True)
+        self.empty_label.setStyleSheet(f"color: {theme.TEXT_MUTED}; padding: 32px;")
+
+        self.content_stack = QStackedWidget()
+        self.content_stack.addWidget(self.empty_label)
+        self.content_stack.addWidget(self.view)
+        self.content_stack.setCurrentWidget(self.empty_label)
+        layout.addWidget(self.content_stack)
 
     def set_commits(self, commits) -> None:
         self.view.set_commits(commits)
+        self.content_stack.setCurrentWidget(self.view if commits else self.empty_label)
         # si la colonne graphe n'a pas été redimensionnée à la main,
         # répercute sa largeur auto-calculée (nb de lanes) sur l'en-tête
         if self.view.graph_auto_size:

@@ -73,7 +73,11 @@ QTextEdit, QPlainTextEdit {{
     background-color: {PANEL_BG};
     border: 1px solid {BORDER};
     border-radius: 6px;
+    padding: 5px;
     font-family: Consolas, "Courier New", monospace;
+}}
+QTextEdit:focus, QPlainTextEdit:focus {{
+    border-color: {ACCENT};
 }}
 QLineEdit {{
     background-color: {PANEL_BG};
@@ -85,12 +89,25 @@ QLineEdit {{
 QLineEdit:focus {{
     border: 1px solid {ACCENT};
 }}
+QComboBox {{
+    background-color: {PANEL_BG};
+    border: 1px solid {BORDER};
+    border-radius: 6px;
+    padding: 6px 8px;
+}}
+QComboBox:focus {{ border-color: {ACCENT}; }}
+QComboBox::drop-down {{ border: none; width: 22px; }}
+QComboBox QAbstractItemView {{
+    background-color: {PANEL_BG};
+    border: 1px solid {BORDER};
+    selection-background-color: {ACCENT_DIM};
+}}
 
 /* ---- boutons ---- */
 QPushButton {{
     background-color: {SURFACE};
     border: 1px solid {BORDER};
-    padding: 5px 12px;
+    padding: 7px 12px;
     border-radius: 6px;
 }}
 QPushButton:hover {{
@@ -100,6 +117,28 @@ QPushButton:hover {{
 QPushButton:pressed {{
     background-color: {ACCENT_DIM};
     color: {HIGHLIGHT};
+}}
+QPushButton:focus, QToolButton:focus {{
+    border: 1px solid {ACCENT};
+}}
+QPushButton:disabled, QToolButton:disabled {{
+    color: {TEXT_MUTED};
+    background-color: transparent;
+    border-color: {BORDER};
+}}
+QPushButton#primaryButton {{
+    color: {HIGHLIGHT};
+    background-color: {ACCENT_DIM};
+    border-color: {ACCENT};
+    font-weight: 600;
+}}
+QPushButton#primaryButton:hover {{
+    background-color: {ACCENT};
+}}
+QPushButton#primaryButton:disabled {{
+    color: {TEXT_MUTED};
+    background-color: {SURFACE};
+    border-color: {BORDER};
 }}
 
 /* ---- barre d'outils ---- */
@@ -116,6 +155,9 @@ QToolBar QToolButton {{
 }}
 QToolBar QToolButton:hover {{
     background-color: {SURFACE};
+}}
+QToolBar QToolButton:pressed {{
+    background-color: {ACCENT_DIM};
 }}
 QToolBar::separator {{
     background-color: {BORDER};
@@ -141,6 +183,34 @@ QTabBar::tab:hover {{
 QTabBar::tab:selected {{
     color: {HIGHLIGHT};
     border-bottom: 2px solid {ACCENT};
+}}
+
+/* ---- menus ---- */
+QMenuBar {{
+    background-color: {PANEL_BG};
+    border-bottom: 1px solid {BORDER};
+}}
+QMenuBar::item {{
+    padding: 5px 9px;
+    background: transparent;
+}}
+QMenuBar::item:selected, QMenu::item:selected {{
+    background-color: {SURFACE};
+    color: {HIGHLIGHT};
+}}
+QMenu {{
+    background-color: {PANEL_BG};
+    border: 1px solid {BORDER};
+    padding: 4px;
+}}
+QMenu::item {{
+    padding: 6px 28px 6px 10px;
+    border-radius: 4px;
+}}
+QMenu::separator {{
+    height: 1px;
+    background: {BORDER};
+    margin: 4px 6px;
 }}
 
 /* ---- barres de défilement ---- */
@@ -198,6 +268,16 @@ QStatusBar {{
     background-color: {PANEL_BG};
     color: {TEXT_MUTED};
     border-top: 1px solid {BORDER};
+}}
+
+QProgressBar {{
+    background-color: {SURFACE};
+    border: none;
+    border-radius: 5px;
+}}
+QProgressBar::chunk {{
+    background-color: {ACCENT};
+    border-radius: 5px;
 }}
 
 QLabel {{
