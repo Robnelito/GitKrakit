@@ -8,8 +8,10 @@ logique Git et la gestion d'erreurs sont centralisées ici.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
+from typing import Any
 
-from PySide6.QtCore import Qt, QEvent, QSize, QThread, QTimer, Signal
+from PySide6.QtCore import Qt, QEvent, QSize, QThread, QTimer
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -19,6 +21,8 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QInputDialog,
+    QProgressBar,
+    QPushButton,
     QSplitter,
     QStackedWidget,
     QTabWidget,
@@ -39,29 +43,25 @@ from gitkrakit.ui.panels import (
     StagingPanel,
     TerminalDock,
 )
-from gitkrakit.workspace import WorkspaceManager
+from gitkrakit.workspace import WorkspaceError, WorkspaceManager
 
 AUTO_FETCH_INTERVAL_MS = 5 * 60 * 1000  # 5 minutes
 
 
-class _FetchThread(QThread):
-    """Exécute GitBackend.fetch() hors du thread UI, pour que le fetch
-    automatique périodique ne gèle jamais la fenêtre (accès réseau)."""
+class _OperationThread(QThread):
+    """Execute one backend callable without blocking Qt's event loop."""
 
-    succeeded = Signal(str)
-    failed = Signal(str)
-
-    def __init__(self, backend: GitBackend, parent=None):
+    def __init__(self, operation: Callable[[], Any], parent=None):
         super().__init__(parent)
-        self._backend = backend
+        self._operation = operation
+        self.result: Any = None
+        self.error: Exception | None = None
 
     def run(self) -> None:
         try:
-            result = self._backend.fetch()
-        except GitBackendError as exc:
-            self.failed.emit(str(exc))
-        else:
-            self.succeeded.emit(result)
+            self.result = self._operation()
+        except Exception as exc:  # surfaced in the UI on the main thread
+            self.error = exc
 
 
 class MainWindow(QMainWindow):
@@ -69,9 +69,16 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("GitKrakit")
         self.resize(1280, 800)
+        self.setMinimumSize(980, 640)
 
         self.backend = GitBackend()
-        self._fetch_thread: _FetchThread | None = None
+        self._operation_thread: _OperationThread | None = None
+        self._operation_label = ""
+        self._operation_done_message: str | None = None
+        self._operation_silent = False
+        self._operation_on_success: Callable[[Any], None] | None = None
+        self._operation_on_error: Callable[[str], None] | None = None
+        self._close_when_idle = False
         self.gitflow = GitFlow(self.backend)
         self.workspace_manager = WorkspaceManager()
         self._commits_by_sha: dict[str, CommitInfo] = {}
@@ -80,56 +87,75 @@ class MainWindow(QMainWindow):
         self._build_toolbar()
         self._build_central_widget()
         self._build_terminal_dock()
+        self._build_menus()
+        self._build_status_bar()
 
         self._auto_fetch_timer = QTimer(self)
         self._auto_fetch_timer.setInterval(AUTO_FETCH_INTERVAL_MS)
         self._auto_fetch_timer.timeout.connect(self._auto_fetch)
         self._auto_fetch_timer.start()
 
-        version_label = QLabel(f"v{__version__}")
-        version_label.setStyleSheet(f"color: {theme.TEXT_MUTED}; padding: 0 8px;")
-        self.statusBar().addPermanentWidget(version_label)
-
-        self.statusBar().showMessage("Ouvre un dépôt pour commencer (Ouvrir un dépôt)")
+        self._update_action_state()
+        self.statusBar().showMessage("Ouvre un dépôt pour commencer")
 
     def closeEvent(self, event) -> None:
-        if self._fetch_thread is not None and self._fetch_thread.isRunning():
-            self._fetch_thread.wait(2000)
+        if self._operation_thread is not None and self._operation_thread.isRunning():
+            self._close_when_idle = True
+            self.statusBar().showMessage(
+                "Fermeture dès que l'opération Git en cours est terminée…"
+            )
+            event.ignore()
+            return
+        self.backend.close()
         super().closeEvent(event)
 
     # ------------------------------------------------------------------
     # Construction UI
     # ------------------------------------------------------------------
     def _build_toolbar(self) -> None:
-        toolbar = QToolBar("Actions")
+        toolbar = QToolBar("Actions principales")
+        toolbar.setObjectName("mainToolbar")
         toolbar.setIconSize(QSize(18, 18))
         toolbar.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         toolbar.setMovable(False)
         self.addToolBar(toolbar)
 
-        open_action = QAction(icons.toolbar_icon("open"), "Ouvrir un dépôt", self)
-        open_action.triggered.connect(self.open_repo_dialog)
-        toolbar.addAction(open_action)
+        self.open_action = QAction(icons.toolbar_icon("open"), "Ouvrir", self)
+        self.open_action.setShortcut("Ctrl+O")
+        self.open_action.setToolTip("Ouvrir un dépôt Git (Ctrl+O)")
+        self.open_action.triggered.connect(self.open_repo_dialog)
+        toolbar.addAction(self.open_action)
 
         toolbar.addSeparator()
 
-        fetch_action = QAction(icons.toolbar_icon("fetch"), "Fetch", self)
-        fetch_action.triggered.connect(lambda: self._run_backend_op(self.backend.fetch))
-        toolbar.addAction(fetch_action)
+        self.fetch_action = QAction(icons.toolbar_icon("fetch"), "Fetch", self)
+        self.fetch_action.setToolTip("Récupérer les références de origin")
+        self.fetch_action.triggered.connect(
+            lambda: self._run_backend_op(self.backend.fetch, label="Fetch en cours…")
+        )
+        toolbar.addAction(self.fetch_action)
 
-        pull_action = QAction(icons.toolbar_icon("pull"), "Pull", self)
-        pull_action.triggered.connect(lambda: self._run_backend_op(self.backend.pull))
-        toolbar.addAction(pull_action)
+        self.pull_action = QAction(icons.toolbar_icon("pull"), "Pull", self)
+        self.pull_action.setToolTip("Récupérer et intégrer les commits de origin")
+        self.pull_action.triggered.connect(
+            lambda: self._run_backend_op(self.backend.pull, label="Pull en cours…")
+        )
+        toolbar.addAction(self.pull_action)
 
-        push_action = QAction(icons.toolbar_icon("push"), "Push", self)
-        push_action.triggered.connect(lambda: self._run_backend_op(self.backend.push))
-        toolbar.addAction(push_action)
+        self.push_action = QAction(icons.toolbar_icon("push"), "Push", self)
+        self.push_action.setToolTip("Publier les commits vers origin")
+        self.push_action.triggered.connect(
+            lambda: self._run_backend_op(self.backend.push, label="Push en cours…")
+        )
+        toolbar.addAction(self.push_action)
 
         toolbar.addSeparator()
 
-        branch_action = QAction(icons.toolbar_icon("branch"), "Nouvelle branche", self)
-        branch_action.triggered.connect(self.create_branch_dialog)
-        toolbar.addAction(branch_action)
+        self.branch_action = QAction(icons.toolbar_icon("branch"), "Nouvelle branche", self)
+        self.branch_action.setShortcut("Ctrl+Shift+B")
+        self.branch_action.setToolTip("Créer une branche (Ctrl+Shift+B)")
+        self.branch_action.triggered.connect(self.create_branch_dialog)
+        toolbar.addAction(self.branch_action)
 
         gitflow_menu = QMenu("Git Flow", self)
         gitflow_menu.addAction("Initialiser Git Flow…", self._gitflow_init)
@@ -144,27 +170,48 @@ class MainWindow(QMainWindow):
         gitflow_button.setMenu(gitflow_menu)
         gitflow_button.setPopupMode(QToolButton.InstantPopup)
         gitflow_button.setAutoRaise(True)
-        toolbar.addWidget(gitflow_button)
+        self.gitflow_action = toolbar.addWidget(gitflow_button)
 
         toolbar.addSeparator()
 
-        stash_action = QAction(icons.toolbar_icon("stash"), "Stash", self)
-        stash_action.triggered.connect(lambda: self._run_backend_op(self.backend.stash))
-        toolbar.addAction(stash_action)
+        self.stash_action = QAction(icons.toolbar_icon("stash"), "Stash", self)
+        self.stash_action.setToolTip("Mettre les modifications de côté")
+        self.stash_action.triggered.connect(
+            lambda: self._run_backend_op(self.backend.stash, label="Création du stash…")
+        )
+        toolbar.addAction(self.stash_action)
 
-        pop_action = QAction(icons.toolbar_icon("pop"), "Pop", self)
-        pop_action.triggered.connect(lambda: self._run_backend_op(self.backend.stash_pop))
-        toolbar.addAction(pop_action)
+        self.pop_action = QAction(icons.toolbar_icon("pop"), "Pop", self)
+        self.pop_action.setToolTip("Réappliquer le dernier stash")
+        self.pop_action.triggered.connect(
+            lambda: self._run_backend_op(self.backend.stash_pop, label="Application du stash…")
+        )
+        toolbar.addAction(self.pop_action)
 
         toolbar.addSeparator()
 
-        refresh_action = QAction(icons.toolbar_icon("refresh"), "Rafraîchir", self)
+        self.refresh_action = QAction(icons.toolbar_icon("refresh"), "Rafraîchir", self)
+        self.refresh_action.setShortcuts(["F5", "Ctrl+R"])
+        self.refresh_action.setToolTip("Rafraîchir le dépôt (F5)")
         # lambda : triggered émet un bool (checked) qui écraserait show_errors
-        refresh_action.triggered.connect(lambda: self.refresh_all())
-        toolbar.addAction(refresh_action)
+        self.refresh_action.triggered.connect(lambda: self.refresh_all())
+        toolbar.addAction(self.refresh_action)
+
+        self._repo_actions = [
+            self.fetch_action,
+            self.pull_action,
+            self.push_action,
+            self.branch_action,
+            self.gitflow_action,
+            self.stash_action,
+            self.pop_action,
+            self.refresh_action,
+        ]
+        self._toolbar = toolbar
 
     def _build_central_widget(self) -> None:
         splitter = QSplitter(Qt.Horizontal)
+        splitter.setChildrenCollapsible(False)
 
         # --- gauche : barre latérale unifiée ---
         self.sidebar = SidebarPanel(self.workspace_manager)
@@ -182,11 +229,14 @@ class MainWindow(QMainWindow):
         self.graph_panel.commit_selected.connect(self.show_commit_details)
 
         self.diff_panel = DiffPanel()
-        diff_page = self._build_diff_page(self.diff_panel)
+        self.diff_page = self._build_diff_page(self.diff_panel)
+        self.welcome_page = self._build_welcome_page()
 
         self.center_stack = QStackedWidget()
-        self.center_stack.addWidget(self.graph_panel)  # index 0 : graphe
-        self.center_stack.addWidget(diff_page)         # index 1 : diff
+        self.center_stack.addWidget(self.welcome_page)
+        self.center_stack.addWidget(self.graph_panel)
+        self.center_stack.addWidget(self.diff_page)
+        self.center_stack.setCurrentWidget(self.welcome_page)
         splitter.addWidget(self.center_stack)
 
         # --- droite : staging + détails ---
@@ -208,6 +258,46 @@ class MainWindow(QMainWindow):
         splitter.setSizes([230, 720, 330])
 
         self.setCentralWidget(splitter)
+
+    def _build_welcome_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(32, 32, 32, 32)
+        layout.addStretch(1)
+
+        title = QLabel("GitKrakit")
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet(
+            f"color: {theme.HIGHLIGHT}; font-size: 28pt; font-weight: 700;"
+        )
+        layout.addWidget(title)
+
+        subtitle = QLabel(
+            "Visualise l'historique, prépare tes commits et garde tes branches synchronisées."
+        )
+        subtitle.setAlignment(Qt.AlignCenter)
+        subtitle.setWordWrap(True)
+        subtitle.setStyleSheet(f"color: {theme.TEXT_MUTED}; font-size: 11pt;")
+        layout.addWidget(subtitle)
+
+        open_button = QPushButton("Ouvrir un dépôt Git")
+        open_button.setObjectName("primaryButton")
+        open_button.setMinimumWidth(190)
+        open_button.setToolTip("Choisir un dossier contenant un dépôt Git")
+        open_button.clicked.connect(self.open_repo_dialog)
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+        button_row.addWidget(open_button)
+        button_row.addStretch(1)
+        layout.addSpacing(12)
+        layout.addLayout(button_row)
+
+        hint = QLabel("Astuce : tes dépôts récents restent accessibles dans la barre latérale.")
+        hint.setAlignment(Qt.AlignCenter)
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        layout.addStretch(2)
+        return page
 
     def _build_diff_page(self, diff_panel: DiffPanel) -> QWidget:
         """Page du diff dans la zone centrale : une barre avec un bouton de
@@ -244,12 +334,57 @@ class MainWindow(QMainWindow):
         return page
 
     def _close_diff(self) -> None:
-        self.center_stack.setCurrentWidget(self.graph_panel)
+        target = self.graph_panel if self.backend.is_open else self.welcome_page
+        self.center_stack.setCurrentWidget(target)
 
     def _build_terminal_dock(self) -> None:
         self.terminal = TerminalDock(self)
+        self.terminal.setObjectName("gitTerminalDock")
         self.terminal.command_entered.connect(self._run_terminal_command)
         self.addDockWidget(Qt.BottomDockWidgetArea, self.terminal)
+        self.terminal.hide()
+
+    def _build_menus(self) -> None:
+        file_menu = self.menuBar().addMenu("&Fichier")
+        file_menu.addAction(self.open_action)
+        file_menu.addSeparator()
+        quit_action = QAction("Quitter", self)
+        quit_action.setShortcut("Ctrl+Q")
+        quit_action.triggered.connect(self.close)
+        file_menu.addAction(quit_action)
+
+        repository_menu = self.menuBar().addMenu("&Dépôt")
+        for action in (
+            self.fetch_action,
+            self.pull_action,
+            self.push_action,
+            self.branch_action,
+            self.stash_action,
+            self.pop_action,
+            self.refresh_action,
+        ):
+            repository_menu.addAction(action)
+
+        view_menu = self.menuBar().addMenu("&Affichage")
+        view_menu.addAction(self._toolbar.toggleViewAction())
+        view_menu.addAction(self.terminal.toggleViewAction())
+
+    def _build_status_bar(self) -> None:
+        self._busy_label = QLabel("")
+        self._busy_label.setStyleSheet(f"color: {theme.TEXT}; padding-left: 8px;")
+        self._busy_label.hide()
+        self.statusBar().addPermanentWidget(self._busy_label)
+
+        self._busy_progress = QProgressBar()
+        self._busy_progress.setRange(0, 0)
+        self._busy_progress.setTextVisible(False)
+        self._busy_progress.setFixedSize(90, 10)
+        self._busy_progress.hide()
+        self.statusBar().addPermanentWidget(self._busy_progress)
+
+        version_label = QLabel(f"v{__version__}")
+        version_label.setStyleSheet(f"color: {theme.TEXT_MUTED}; padding: 0 8px;")
+        self.statusBar().addPermanentWidget(version_label)
 
     # ------------------------------------------------------------------
     # Ouverture de dépôt
@@ -261,16 +396,26 @@ class MainWindow(QMainWindow):
 
     def open_repo(self, path: str) -> None:
         """Point d'entrée unique pour ouvrir un dépôt (dialogue, sidebar, CLI)."""
+        if self._is_busy:
+            self.statusBar().showMessage(
+                "Attends la fin de l'opération Git avant de changer de dépôt.", 4000
+            )
+            return
         try:
             self.backend.open(path)
         except GitBackendError as exc:
-            QMessageBox.critical(self, "Erreur", str(exc))
+            QMessageBox.critical(self, "Dépôt Git invalide", str(exc))
             return
         active_path = self.backend.working_dir or path
-        self.workspace_manager.touch_recent(active_path)
+        try:
+            self.workspace_manager.touch_recent(active_path)
+        except WorkspaceError as exc:
+            QMessageBox.warning(self, "Dépôts récents", str(exc))
         self.sidebar.set_active_repo(active_path)
-        self.setWindowTitle(f"GitKrakit — {path}")
+        self.setWindowTitle(f"GitKrakit — {active_path}")
         self._close_diff()  # un diff affiché appartient à l'ancien dépôt
+        self.center_stack.setCurrentWidget(self.graph_panel)
+        self._update_action_state()
         self.refresh_all()
         self._auto_fetch()
 
@@ -293,7 +438,7 @@ class MainWindow(QMainWindow):
         (rafraîchissement auto), les erreurs vont dans la barre de statut au
         lieu d'un dialogue — sinon fermer le dialogue redonnerait le focus à
         la fenêtre et relancerait le rafraîchissement en boucle."""
-        if not self.backend.is_open:
+        if not self.backend.is_open or self._is_busy:
             return
         try:
             self.sidebar.update_refs(
@@ -326,32 +471,21 @@ class MainWindow(QMainWindow):
     # Fetch automatique
     # ------------------------------------------------------------------
     def _auto_fetch(self) -> None:
-        """Fetch périodique en arrière-plan : ne bloque jamais l'UI, et ne
-        démarre pas un second fetch si un précédent est encore en cours."""
+        """Start a quiet background fetch when no other Git task is active."""
         if not self.backend.is_open:
             return
-        if self._fetch_thread is not None and self._fetch_thread.isRunning():
-            return
-        self._fetch_thread = _FetchThread(self.backend, self)
-        self._fetch_thread.succeeded.connect(self._on_auto_fetch_succeeded)
-        self._fetch_thread.failed.connect(self._on_auto_fetch_failed)
-        self._fetch_thread.start()
-
-    def _on_auto_fetch_succeeded(self, message: str) -> None:
-        self.statusBar().showMessage(f"Fetch auto : {message}", 4000)
-        # les branches distantes ont pu bouger : rafraîchit les indicateurs
-        # ↓pull/↑push et le graphe, sans dialogue d'erreur intrusif
-        self.refresh_all(show_errors=False)
-
-    def _on_auto_fetch_failed(self, message: str) -> None:
-        # échec silencieux (pas de réseau, remote inaccessible…) : un
-        # fetch auto qui échoue ne doit jamais interrompre l'utilisateur
-        self.statusBar().showMessage(f"Fetch auto échoué : {message}", 4000)
+        self._start_backend_operation(
+            self.backend.fetch,
+            label="Synchronisation automatique…",
+            silent=True,
+        )
 
     # ------------------------------------------------------------------
     # Actions Git
     # ------------------------------------------------------------------
     def _checkout_branch(self, name: str) -> None:
+        if self._is_busy:
+            return
         try:
             self.backend.checkout(name)
         except GitBackendError as exc:
@@ -360,6 +494,8 @@ class MainWindow(QMainWindow):
         self.refresh_all()
 
     def _delete_branch(self, name: str) -> None:
+        if self._is_busy:
+            return
         try:
             self.backend.delete_branch(name)
         except GitBackendError as exc:
@@ -368,7 +504,7 @@ class MainWindow(QMainWindow):
         self.refresh_all()
 
     def create_branch_dialog(self) -> None:
-        if not self.backend.is_open:
+        if not self.backend.is_open or self._is_busy:
             return
         name, ok = QInputDialog.getText(self, "Nouvelle branche", "Nom de la branche :")
         if not ok or not name.strip():
@@ -381,6 +517,8 @@ class MainWindow(QMainWindow):
         self.refresh_all()
 
     def _stage(self, paths: list[str]) -> None:
+        if self._is_busy:
+            return
         try:
             self.backend.stage(paths)
         except GitBackendError as exc:
@@ -388,6 +526,8 @@ class MainWindow(QMainWindow):
         self._refresh_status()
 
     def _unstage(self, paths: list[str]) -> None:
+        if self._is_busy:
+            return
         try:
             self.backend.unstage(paths)
         except GitBackendError as exc:
@@ -395,6 +535,8 @@ class MainWindow(QMainWindow):
         self._refresh_status()
 
     def _commit(self, message: str) -> None:
+        if self._is_busy:
+            return
         try:
             self.backend.commit(message)
         except GitBackendError as exc:
@@ -403,22 +545,111 @@ class MainWindow(QMainWindow):
         self.staging_panel.clear_message()
         self.refresh_all()
 
-    def _run_backend_op(self, fn, done_message: str | None = None) -> None:
-        """Opération backend qui retourne un message de statut (fetch, pull,
-        push, stash, git flow…) : affiche le résultat dans la barre de statut."""
+    @property
+    def _is_busy(self) -> bool:
+        return self._operation_thread is not None
+
+    def _run_backend_op(
+        self,
+        fn: Callable[[], Any],
+        done_message: str | None = None,
+        label: str = "Opération Git en cours…",
+    ) -> None:
+        """Run a potentially slow Git operation outside the UI thread."""
+        self._start_backend_operation(fn, label=label, done_message=done_message)
+
+    def _start_backend_operation(
+        self,
+        fn: Callable[[], Any],
+        *,
+        label: str,
+        done_message: str | None = None,
+        silent: bool = False,
+        on_success: Callable[[Any], None] | None = None,
+        on_error: Callable[[str], None] | None = None,
+    ) -> bool:
         if not self.backend.is_open:
+            if not silent:
+                self.statusBar().showMessage("Aucun dépôt Git n'est ouvert.", 4000)
+            return False
+        if self._is_busy:
+            if not silent:
+                self.statusBar().showMessage("Une opération Git est déjà en cours.", 4000)
+            return False
+
+        self._operation_label = label
+        self._operation_done_message = done_message
+        self._operation_silent = silent
+        self._operation_on_success = on_success
+        self._operation_on_error = on_error
+        self._operation_thread = _OperationThread(fn, self)
+        self._operation_thread.finished.connect(self._on_operation_finished)
+        self._set_busy(True)
+        self._operation_thread.start()
+        return True
+
+    def _on_operation_finished(self) -> None:
+        thread = self._operation_thread
+        if thread is None:
             return
-        try:
-            result = fn()
-        except GitBackendError as exc:
-            QMessageBox.critical(self, "Erreur", str(exc))
-            return
-        message = done_message or (result if isinstance(result, str) else "")
-        if message:
-            self.statusBar().showMessage(message, 5000)
-        self.refresh_all()
+
+        error = thread.error
+        result = thread.result
+        silent = self._operation_silent
+        done_message = self._operation_done_message
+        on_success = self._operation_on_success
+        on_error = self._operation_on_error
+        thread.deleteLater()
+        self._operation_thread = None
+        self._set_busy(False)
+
+        if error is not None:
+            message = str(error)
+            # A failed pull/merge can still have changed the working tree.
+            self.refresh_all(show_errors=False)
+            if on_error is not None:
+                on_error(message)
+            elif silent:
+                self.statusBar().showMessage(f"Synchronisation échouée : {message}", 5000)
+            else:
+                QMessageBox.critical(self, "Opération Git échouée", message)
+        else:
+            self.refresh_all(show_errors=not silent)
+            if on_success is not None:
+                on_success(result)
+            else:
+                message = done_message or (result if isinstance(result, str) else "")
+                if silent and message:
+                    message = f"Fetch auto : {message}"
+                if message:
+                    self.statusBar().showMessage(message, 5000)
+
+        if self._close_when_idle:
+            self._close_when_idle = False
+            QTimer.singleShot(0, self.close)
+
+    def _set_busy(self, busy: bool) -> None:
+        self._busy_label.setText(self._operation_label if busy else "")
+        self._busy_label.setVisible(busy)
+        self._busy_progress.setVisible(busy)
+        self._update_action_state()
+
+    def _update_action_state(self) -> None:
+        repo_open = self.backend.is_open
+        repo_ready = repo_open and not self._is_busy
+        self.open_action.setEnabled(not self._is_busy)
+        for action in self._repo_actions:
+            action.setEnabled(repo_ready)
+        if hasattr(self, "staging_panel"):
+            self._right_panel.setVisible(repo_open)
+            self.staging_panel.setEnabled(repo_ready)
+            self._right_panel.setEnabled(repo_ready)
+            self.sidebar.refs_tree.setEnabled(repo_ready)
+            self.terminal.setEnabled(repo_ready)
 
     def show_commit_details(self, sha: str) -> None:
+        if self._is_busy:
+            return
         commit = self._commits_by_sha.get(sha)
         if commit is None:
             return
@@ -433,10 +664,18 @@ class MainWindow(QMainWindow):
     # Git Flow
     # ------------------------------------------------------------------
     def _gitflow_init(self) -> None:
-        if not self.backend.is_open:
+        self._start_gitflow_initialization()
+
+    def _start_gitflow_initialization(
+        self, after_init: Callable[[], None] | None = None
+    ) -> None:
+        if not self.backend.is_open or self._is_busy:
             return
         if self.gitflow.is_initialized():
-            QMessageBox.information(self, "Git Flow", "Git Flow est déjà initialisé.")
+            if after_init is not None:
+                after_init()
+            else:
+                QMessageBox.information(self, "Git Flow", "Git Flow est déjà initialisé.")
             return
         answer = QMessageBox.question(
             self,
@@ -448,15 +687,24 @@ class MainWindow(QMainWindow):
         )
         if answer != QMessageBox.Yes:
             return
-        self._run_backend_op(self.gitflow.init, done_message="Git Flow initialisé — branche develop")
+
+        def initialized(_result: Any) -> None:
+            self.statusBar().showMessage("Git Flow initialisé — branche develop", 5000)
+            if after_init is not None:
+                after_init()
+
+        self._start_backend_operation(
+            self.gitflow.init,
+            label="Initialisation de Git Flow…",
+            on_success=initialized,
+        )
 
     def _gitflow_start(self, kind: str) -> None:
-        if not self.backend.is_open:
+        if not self.backend.is_open or self._is_busy:
             return
         if not self.gitflow.is_initialized():
-            self._gitflow_init()
-            if not self.gitflow.is_initialized():
-                return
+            self._start_gitflow_initialization(lambda: self._gitflow_start(kind))
+            return
         prompts = {
             "feature": ("Nouvelle feature", "Nom de la feature :", self.gitflow.feature_start),
             "release": ("Nouvelle release", "Version (ex: 1.2.0) :", self.gitflow.release_start),
@@ -466,9 +714,13 @@ class MainWindow(QMainWindow):
         name, ok = QInputDialog.getText(self, title, label)
         if not ok or not name.strip():
             return
-        self._run_backend_op(lambda: start_fn(name))
+        self._run_backend_op(
+            lambda: start_fn(name.strip()), label=f"Création de {kind}/{name.strip()}…"
+        )
 
     def _gitflow_finish(self, kind: str, name: str) -> None:
+        if self._is_busy:
+            return
         confirmations = {
             "feature": (
                 f"Terminer la feature '{name}' ?\n\n"
@@ -495,26 +747,30 @@ class MainWindow(QMainWindow):
         self._run_backend_op(lambda: finish_fn(name))
 
     def _show_working_diff(self, path: str, staged: bool) -> None:
+        if self._is_busy:
+            return
         diff = self.backend.diff_for_file(path, staged=staged)
         origin = "indexé" if staged else "non indexé"
         self.diff_panel.show_diff(f"{path}  ({origin})", diff, file_path=path)
-        self.center_stack.setCurrentIndex(1)
+        self.center_stack.setCurrentWidget(self.diff_page)
 
     def _show_commit_diff(self, sha: str, path: str) -> None:
+        if self._is_busy:
+            return
         try:
             diff = self.backend.diff_for_commit_file(sha, path)
         except GitBackendError as exc:
             diff = str(exc)
         self.diff_panel.show_diff(f"{path}  (commit {sha[:7]})", diff, file_path=path)
-        self.center_stack.setCurrentIndex(1)
+        self.center_stack.setCurrentWidget(self.diff_page)
 
     def _run_terminal_command(self, args: list[str]) -> None:
         if not self.backend.is_open:
             self.terminal.append_output("Erreur: aucun dépôt ouvert.")
             return
-        try:
-            output = self.backend.run_raw(args)
-            self.terminal.append_output(output or "(aucune sortie)")
-        except GitBackendError as exc:
-            self.terminal.append_output(f"Erreur: {exc}")
-        self.refresh_all()
+        self._start_backend_operation(
+            lambda: self.backend.run_raw(args),
+            label=f"git {args[0]}…" if args else "Commande Git…",
+            on_success=lambda output: self.terminal.append_output(output or "(aucune sortie)"),
+            on_error=lambda message: self.terminal.append_output(f"Erreur: {message}"),
+        )

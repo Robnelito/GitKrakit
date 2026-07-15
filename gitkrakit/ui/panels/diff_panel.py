@@ -12,6 +12,7 @@ from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHeaderView,
+    QHBoxLayout,
     QLabel,
     QTableWidget,
     QTableWidgetItem,
@@ -43,7 +44,14 @@ class DiffPanel(QWidget):
         self.title_label.setStyleSheet(
             f"color: {theme.TEXT_MUTED}; font-family: Consolas, monospace;"
         )
-        layout.addWidget(self.title_label)
+        self.title_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.summary_label = QLabel("")
+        self.summary_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.summary_label.setStyleSheet(f"color: {theme.TEXT_MUTED}; font-size: 9pt;")
+        title_row = QHBoxLayout()
+        title_row.addWidget(self.title_label, stretch=1)
+        title_row.addWidget(self.summary_label)
+        layout.addLayout(title_row)
 
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(["", "Ancien", "", "Nouveau"])
@@ -80,6 +88,9 @@ class DiffPanel(QWidget):
         self.title_label.setText(title)
         self._language = detect_language(file_path) if file_path else None
         rows = parse_unified_diff(diff_text) if diff_text else []
+        added = sum(1 for row in rows if row.kind in ("add", "mod"))
+        deleted = sum(1 for row in rows if row.kind in ("del", "mod"))
+        self.summary_label.setText(f"+{added}  −{deleted}" if rows else "")
 
         self.table.setRowCount(0)
         if not rows:

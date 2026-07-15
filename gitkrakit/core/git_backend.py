@@ -8,11 +8,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from functools import wraps
 from pathlib import Path
+from threading import RLock
 from typing import Optional
 
 import git
 from git import Repo, InvalidGitRepositoryError, NoSuchPathError
+from git.remote import PushInfo
 
 
 @dataclass
@@ -37,10 +40,29 @@ class GitBackendError(Exception):
     """Erreur remontée par le backend, à afficher telle quelle dans l'UI."""
 
 
+def _synchronized(method):
+    """Serialize access to the GitPython ``Repo`` instance.
+
+    GitPython does not guarantee that one repository object can safely be
+    used from several threads.  The UI performs remote operations in a
+    worker thread, so every public backend entry point shares this lock.
+    ``RLock`` is intentional: a backend method may use another synchronized
+    property such as ``working_dir``.
+    """
+
+    @wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return wrapper
+
+
 class GitBackend:
     """Wrapper GitPython. Une instance = un dépôt ouvert."""
 
     def __init__(self, repo_path: Optional[str] = None):
+        self._lock = RLock()
         self.repo: Optional[Repo] = None
         if repo_path:
             self.open(repo_path)
@@ -48,22 +70,37 @@ class GitBackend:
     # ------------------------------------------------------------------
     # Ouverture / infos générales
     # ------------------------------------------------------------------
+    @_synchronized
     def open(self, repo_path: str) -> None:
         try:
-            self.repo = Repo(repo_path, search_parent_directories=True)
+            new_repo = Repo(repo_path, search_parent_directories=True)
         except (InvalidGitRepositoryError, NoSuchPathError) as exc:
             raise GitBackendError(f"'{repo_path}' n'est pas un dépôt Git valide.") from exc
+        previous_repo = self.repo
+        self.repo = new_repo
+        if previous_repo is not None:
+            previous_repo.close()
+
+    @_synchronized
+    def close(self) -> None:
+        """Release GitPython resources, notably Windows process handles."""
+        if self.repo is not None:
+            self.repo.close()
+            self.repo = None
 
     @property
+    @_synchronized
     def is_open(self) -> bool:
         return self.repo is not None
 
     @property
+    @_synchronized
     def working_dir(self) -> str:
         self._require_repo()
         return self.repo.working_tree_dir or ""
 
     @property
+    @_synchronized
     def current_branch(self) -> str:
         self._require_repo()
         try:
@@ -78,10 +115,12 @@ class GitBackend:
     # ------------------------------------------------------------------
     # Branches / tags
     # ------------------------------------------------------------------
+    @_synchronized
     def local_branches(self) -> list[str]:
         self._require_repo()
         return [h.name for h in self.repo.heads]
 
+    @_synchronized
     def remote_branches(self) -> list[str]:
         self._require_repo()
         names = []
@@ -93,10 +132,12 @@ class GitBackend:
                 continue
         return names
 
+    @_synchronized
     def tags(self) -> list[str]:
         self._require_repo()
         return [t.name for t in self.repo.tags]
 
+    @_synchronized
     def branch_ahead_behind(self) -> dict[str, tuple[int, int]]:
         """Pour chaque branche locale ayant une branche amont (tracking),
         retourne {nom: (ahead, behind)} par rapport à cette branche amont.
@@ -117,6 +158,7 @@ class GitBackend:
                 result[head.name] = (ahead, behind)
         return result
 
+    @_synchronized
     def create_branch(self, name: str, start_point: Optional[str] = None) -> None:
         self._require_repo()
         try:
@@ -124,6 +166,7 @@ class GitBackend:
         except Exception as exc:
             raise GitBackendError(f"Impossible de créer la branche '{name}': {exc}") from exc
 
+    @_synchronized
     def checkout(self, branch_name: str) -> None:
         self._require_repo()
         try:
@@ -131,6 +174,7 @@ class GitBackend:
         except git.GitCommandError as exc:
             raise GitBackendError(f"Échec du checkout '{branch_name}': {exc}") from exc
 
+    @_synchronized
     def delete_branch(self, branch_name: str, force: bool = False) -> None:
         self._require_repo()
         try:
@@ -141,6 +185,7 @@ class GitBackend:
     # ------------------------------------------------------------------
     # Historique (pour le graphe)
     # ------------------------------------------------------------------
+    @_synchronized
     def commit_log(self, max_count: int = 300) -> list[CommitInfo]:
         """Retourne les commits en ordre topologique (parent après enfant),
         avec les refs (branches/tags) qui pointent dessus."""
@@ -196,6 +241,7 @@ class GitBackend:
         "T": "typechange",
     }
 
+    @_synchronized
     def status(self) -> tuple[list[FileStatus], list[FileStatus]]:
         """Retourne (staged, unstaged), via `git status --porcelain`.
 
@@ -228,6 +274,7 @@ class GitBackend:
 
         return staged, unstaged
 
+    @_synchronized
     def stage(self, paths: list[str]) -> None:
         """Indexe les chemins donnés, y compris les fichiers supprimés
         (index.add() de GitPython échoue sur un fichier absent du disque,
@@ -238,6 +285,7 @@ class GitBackend:
         except git.GitCommandError as exc:
             raise GitBackendError(f"Échec de l'indexation: {exc}") from exc
 
+    @_synchronized
     def unstage(self, paths: list[str]) -> None:
         self._require_repo()
         try:
@@ -249,6 +297,7 @@ class GitBackend:
         except git.GitCommandError as exc:
             raise GitBackendError(f"Échec de la désindexation: {exc}") from exc
 
+    @_synchronized
     def commit_files(self, sha: str) -> list[FileStatus]:
         """Fichiers modifiés par un commit (pour le panneau de détails)."""
         self._require_repo()
@@ -267,6 +316,7 @@ class GitBackend:
             files.append(FileStatus(path=path, status=self._STATUS_LABELS.get(code, code)))
         return files
 
+    @_synchronized
     def stash(self) -> str:
         self._require_repo()
         try:
@@ -274,6 +324,7 @@ class GitBackend:
         except git.GitCommandError as exc:
             raise GitBackendError(f"Échec du stash: {exc}") from exc
 
+    @_synchronized
     def stash_pop(self) -> str:
         self._require_repo()
         try:
@@ -281,6 +332,7 @@ class GitBackend:
         except git.GitCommandError as exc:
             raise GitBackendError(f"Échec du stash pop: {exc}") from exc
 
+    @_synchronized
     def diff_for_file(self, path: str, staged: bool = False) -> str:
         self._require_repo()
         try:
@@ -305,6 +357,7 @@ class GitBackend:
             return f"--- /dev/null\n+++ b/{path}\n" + "\n".join(f"+{l}" for l in lines)
         return diff
 
+    @_synchronized
     def diff_for_commit_file(self, sha: str, path: str) -> str:
         """Diff d'un fichier tel que modifié par un commit donné."""
         self._require_repo()
@@ -313,6 +366,7 @@ class GitBackend:
         except git.GitCommandError as exc:
             raise GitBackendError(f"Diff indisponible pour {path}: {exc}") from exc
 
+    @_synchronized
     def commit(self, message: str) -> None:
         self._require_repo()
         if not message.strip():
@@ -325,6 +379,7 @@ class GitBackend:
     # ------------------------------------------------------------------
     # Remote : fetch / pull / push
     # ------------------------------------------------------------------
+    @_synchronized
     def fetch(self, remote_name: str = "origin") -> str:
         self._require_repo()
         try:
@@ -334,6 +389,7 @@ class GitBackend:
         except Exception as exc:
             raise GitBackendError(f"Échec du fetch: {exc}") from exc
 
+    @_synchronized
     def pull(self, remote_name: str = "origin") -> str:
         self._require_repo()
         try:
@@ -343,15 +399,28 @@ class GitBackend:
         except Exception as exc:
             raise GitBackendError(f"Échec du pull: {exc}") from exc
 
+    @_synchronized
     def push(self, remote_name: str = "origin") -> str:
         self._require_repo()
         try:
             remote = self.repo.remote(remote_name)
             infos = remote.push()
+            error_flags = (
+                PushInfo.ERROR
+                | PushInfo.REJECTED
+                | PushInfo.REMOTE_REJECTED
+                | PushInfo.REMOTE_FAILURE
+            )
+            failures = [info.summary.strip() for info in infos if info.flags & error_flags]
+            if failures:
+                raise GitBackendError("Échec du push: " + "; ".join(failures))
             return f"Push OK ({len(infos)} ref(s))"
+        except GitBackendError:
+            raise
         except Exception as exc:
             raise GitBackendError(f"Échec du push: {exc}") from exc
 
+    @_synchronized
     def run_raw(self, command_args: list[str]) -> str:
         """Exécute une commande git brute (pour le mini-terminal intégré)."""
         self._require_repo()
