@@ -208,6 +208,77 @@ QToolBar::separator {{
     margin: 4px 6px;
 }}
 
+/* ---- barre d'actions principale ---- */
+QToolBar#mainToolbar {{
+    background-color: {PANEL_BG};
+    border: none;
+    border-bottom: 1px solid {BORDER};
+    padding: 6px 10px;
+    spacing: 0;
+}}
+QToolBar#mainToolbar QWidget#toolbarGroup {{
+    background-color: {BACKGROUND};
+    border: 1px solid {BORDER};
+    border-radius: 9px;
+}}
+QToolBar#mainToolbar QWidget#toolbarGap,
+QToolBar#mainToolbar QWidget#toolbarStretch {{
+    background-color: transparent;
+    border: none;
+}}
+QToolBar#mainToolbar QToolButton {{
+    color: {TEXT_MUTED};
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    padding: 6px 9px;
+    margin: 0;
+    font-size: 9pt;
+    font-weight: 500;
+}}
+QToolBar#mainToolbar QToolButton:hover {{
+    color: {HIGHLIGHT};
+    background-color: {SURFACE};
+    border-color: transparent;
+}}
+QToolBar#mainToolbar QToolButton:pressed,
+QToolBar#mainToolbar QToolButton:checked {{
+    color: {HIGHLIGHT};
+    background-color: {ACCENT_SOFT};
+    border-color: {ACCENT_DIM};
+}}
+QToolBar#mainToolbar QToolButton:disabled {{
+    color: #59636e;
+    background-color: transparent;
+    border-color: transparent;
+}}
+QToolBar#mainToolbar QToolButton#toolbarPrimaryButton {{
+    color: {TEXT};
+    background-color: {SURFACE};
+    border-color: {BORDER};
+    padding-left: 11px;
+    padding-right: 11px;
+}}
+QToolBar#mainToolbar QToolButton#toolbarPrimaryButton:hover {{
+    color: {HIGHLIGHT};
+    border-color: {TEXT_MUTED};
+}}
+QToolBar#mainToolbar QToolButton#toolbarUtilityButton {{
+    min-width: 30px;
+    padding-left: 6px;
+    padding-right: 6px;
+}}
+QToolBar#mainToolbar QToolButton#toolbarMenuButton::menu-indicator {{
+    subcontrol-origin: padding;
+    subcontrol-position: right center;
+    width: 9px;
+    height: 9px;
+    right: 5px;
+}}
+QToolBar#mainToolbar QToolButton#toolbarMenuButton {{
+    padding-right: 18px;
+}}
+
 /* ---- onglets ---- */
 QTabWidget::pane {{
     border: 1px solid {BORDER};

@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QProgressBar,
     QPushButton,
+    QSizePolicy,
     QSplitter,
     QStackedWidget,
     QTabWidget,
@@ -120,44 +121,47 @@ class MainWindow(QMainWindow):
         toolbar.setIconSize(QSize(18, 18))
         toolbar.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         toolbar.setMovable(False)
+        toolbar.setFloatable(False)
+        toolbar.setMinimumHeight(50)
         self.addToolBar(toolbar)
 
         self.open_action = QAction(icons.toolbar_icon("open"), "Ouvrir", self)
         self.open_action.setShortcut("Ctrl+O")
         self.open_action.setToolTip("Ouvrir un dépôt Git (Ctrl+O)")
         self.open_action.triggered.connect(self.open_repo_dialog)
-        toolbar.addAction(self.open_action)
-
-        toolbar.addSeparator()
+        open_button = self._make_toolbar_button(self.open_action, object_name="toolbarPrimaryButton")
+        toolbar.addWidget(open_button)
+        toolbar.addWidget(self._toolbar_gap())
 
         self.fetch_action = QAction(icons.toolbar_icon("fetch"), "Fetch", self)
         self.fetch_action.setToolTip("Récupérer les références de origin")
         self.fetch_action.triggered.connect(
             lambda: self._run_backend_op(self.backend.fetch, label="Fetch en cours…")
         )
-        toolbar.addAction(self.fetch_action)
 
         self.pull_action = QAction(icons.toolbar_icon("pull"), "Pull", self)
         self.pull_action.setToolTip("Récupérer et intégrer les commits de origin")
         self.pull_action.triggered.connect(
             lambda: self._run_backend_op(self.backend.pull, label="Pull en cours…")
         )
-        toolbar.addAction(self.pull_action)
 
         self.push_action = QAction(icons.toolbar_icon("push"), "Push", self)
         self.push_action.setToolTip("Publier les commits vers origin")
         self.push_action.triggered.connect(
             lambda: self._run_backend_op(self.backend.push, label="Push en cours…")
         )
-        toolbar.addAction(self.push_action)
-
-        toolbar.addSeparator()
+        sync_group = self._toolbar_group(
+            self._make_toolbar_button(self.fetch_action),
+            self._make_toolbar_button(self.pull_action),
+            self._make_toolbar_button(self.push_action),
+        )
+        toolbar.addWidget(sync_group)
+        toolbar.addWidget(self._toolbar_gap())
 
         self.branch_action = QAction(icons.toolbar_icon("branch"), "Nouvelle branche", self)
         self.branch_action.setShortcut("Ctrl+Shift+B")
         self.branch_action.setToolTip("Créer une branche (Ctrl+Shift+B)")
         self.branch_action.triggered.connect(self.create_branch_dialog)
-        toolbar.addAction(self.branch_action)
 
         gitflow_menu = QMenu("Git Flow", self)
         gitflow_menu.addAction("Initialiser Git Flow…", self._gitflow_init)
@@ -165,39 +169,55 @@ class MainWindow(QMainWindow):
         gitflow_menu.addAction("Démarrer une feature…", lambda: self._gitflow_start("feature"))
         gitflow_menu.addAction("Démarrer une release…", lambda: self._gitflow_start("release"))
         gitflow_menu.addAction("Démarrer un hotfix…", lambda: self._gitflow_start("hotfix"))
-        gitflow_button = QToolButton()
-        gitflow_button.setIcon(icons.toolbar_icon("gitflow"))
-        gitflow_button.setText("Git Flow")
-        gitflow_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.gitflow_action = QAction(icons.toolbar_icon("gitflow"), "Git Flow", self)
+        self.gitflow_action.setToolTip("Initialiser ou gérer un workflow Git Flow")
+        self.gitflow_action.setMenu(gitflow_menu)
+        gitflow_button = self._make_toolbar_button(
+            self.gitflow_action, object_name="toolbarMenuButton"
+        )
         gitflow_button.setMenu(gitflow_menu)
         gitflow_button.setPopupMode(QToolButton.InstantPopup)
-        gitflow_button.setAutoRaise(True)
-        self.gitflow_action = toolbar.addWidget(gitflow_button)
-
-        toolbar.addSeparator()
+        branch_group = self._toolbar_group(
+            self._make_toolbar_button(self.branch_action),
+            gitflow_button,
+        )
+        toolbar.addWidget(branch_group)
+        toolbar.addWidget(self._toolbar_gap())
 
         self.stash_action = QAction(icons.toolbar_icon("stash"), "Stash", self)
         self.stash_action.setToolTip("Mettre les modifications de côté")
         self.stash_action.triggered.connect(
             lambda: self._run_backend_op(self.backend.stash, label="Création du stash…")
         )
-        toolbar.addAction(self.stash_action)
 
         self.pop_action = QAction(icons.toolbar_icon("pop"), "Pop", self)
         self.pop_action.setToolTip("Réappliquer le dernier stash")
         self.pop_action.triggered.connect(
             lambda: self._run_backend_op(self.backend.stash_pop, label="Application du stash…")
         )
-        toolbar.addAction(self.pop_action)
+        stash_group = self._toolbar_group(
+            self._make_toolbar_button(self.stash_action),
+            self._make_toolbar_button(self.pop_action),
+        )
+        toolbar.addWidget(stash_group)
 
-        toolbar.addSeparator()
+        stretch = QWidget()
+        stretch.setObjectName("toolbarStretch")
+        stretch.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        toolbar.addWidget(stretch)
 
         self.refresh_action = QAction(icons.toolbar_icon("refresh"), "Rafraîchir", self)
         self.refresh_action.setShortcuts(["F5", "Ctrl+R"])
         self.refresh_action.setToolTip("Rafraîchir le dépôt (F5)")
         # lambda : triggered émet un bool (checked) qui écraserait show_errors
         self.refresh_action.triggered.connect(lambda: self.refresh_all())
-        toolbar.addAction(self.refresh_action)
+        refresh_button = self._make_toolbar_button(
+            self.refresh_action,
+            icon_only=True,
+            object_name="toolbarUtilityButton",
+        )
+        refresh_button.setAccessibleName("Rafraîchir le dépôt")
+        toolbar.addWidget(refresh_button)
 
         self._repo_actions = [
             self.fetch_action,
@@ -210,6 +230,41 @@ class MainWindow(QMainWindow):
             self.refresh_action,
         ]
         self._toolbar = toolbar
+
+    @staticmethod
+    def _make_toolbar_button(
+        action: QAction,
+        *,
+        icon_only: bool = False,
+        object_name: str = "toolbarActionButton",
+    ) -> QToolButton:
+        button = QToolButton()
+        button.setObjectName(object_name)
+        button.setDefaultAction(action)
+        button.setToolButtonStyle(
+            Qt.ToolButtonIconOnly if icon_only else Qt.ToolButtonTextBesideIcon
+        )
+        button.setAutoRaise(True)
+        button.setCursor(Qt.PointingHandCursor)
+        return button
+
+    @staticmethod
+    def _toolbar_group(*buttons: QToolButton) -> QWidget:
+        group = QWidget()
+        group.setObjectName("toolbarGroup")
+        layout = QHBoxLayout(group)
+        layout.setContentsMargins(3, 3, 3, 3)
+        layout.setSpacing(1)
+        for button in buttons:
+            layout.addWidget(button)
+        return group
+
+    @staticmethod
+    def _toolbar_gap(width: int = 10) -> QWidget:
+        gap = QWidget()
+        gap.setObjectName("toolbarGap")
+        gap.setFixedWidth(width)
+        return gap
 
     def _build_central_widget(self) -> None:
         splitter = QSplitter(Qt.Horizontal)
@@ -364,6 +419,7 @@ class MainWindow(QMainWindow):
             self.pull_action,
             self.push_action,
             self.branch_action,
+            self.gitflow_action,
             self.stash_action,
             self.pop_action,
             self.refresh_action,
