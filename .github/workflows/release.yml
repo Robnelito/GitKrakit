@@ -1,12 +1,9 @@
 name: Release GitKrakit update
 
 on:
-  workflow_dispatch:
-    inputs:
-      version:
-        description: Release version (MAJOR.MINOR.PATCH)
-        required: true
-        type: string
+  push:
+    branches:
+      - main
 
 permissions:
   contents: write
@@ -46,25 +43,19 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev,release]"
 
-      - name: Bump single-source version
+      - name: Read single-source version
+        id: version
         shell: pwsh
-        run: python scripts/set_version.py "${{ inputs.version }}"
+        run: |
+          $version = python -c "from gitkrakit import __version__; print(__version__)"
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Invalid gitkrakit.__version__: $version"
+          }
+          "value=$version" >> $env:GITHUB_OUTPUT
 
       - name: Run tests
         shell: pwsh
         run: python -m unittest discover -s tests -v
-
-      - name: Commit version bump
-        shell: pwsh
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add gitkrakit/__init__.py
-          git diff --cached --quiet
-          if ($LASTEXITCODE -ne 0) {
-            git commit -m "chore(release): v${{ inputs.version }}"
-            git push origin "HEAD:$env:GITHUB_REF_NAME"
-          }
 
       - name: Initialize PyUpdater repository
         shell: pwsh
@@ -106,7 +97,7 @@ jobs:
         shell: pwsh
         run: |
           pyupdater build --clean --keep --pyinstaller-log-info `
-            --app-version="${{ inputs.version }}" win.spec
+            --app-version="${{ steps.version.outputs.value }}" win.spec
           $env:PYTHONPATH = Join-Path $PWD 'scripts\pyupdater_compat'
           pyupdater pkg --process --sign
 
@@ -122,7 +113,7 @@ jobs:
         shell: pwsh
         run: |
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          & $iscc "/DAppVersion=${{ inputs.version }}" installer\GitKrakit.iss
+          & $iscc "/DAppVersion=${{ steps.version.outputs.value }}" installer\GitKrakit.iss
 
       - name: Publish stable update assets
         shell: pwsh
@@ -137,8 +128,8 @@ jobs:
           }
           gh release edit latest-updates `
             --repo $env:GITHUB_REPOSITORY `
-            --title "GitKrakit ${{ inputs.version }}" `
-            --notes "Signed automatic-update payload and per-user installer for GitKrakit ${{ inputs.version }}." `
+            --title "GitKrakit ${{ steps.version.outputs.value }}" `
+            --notes "Signed automatic-update payload and per-user installer for GitKrakit ${{ steps.version.outputs.value }}." `
             --latest
           Get-ChildItem pyu-data\deploy -File | ForEach-Object {
             gh release upload latest-updates $_.FullName `
@@ -152,7 +143,7 @@ jobs:
       - name: Preserve release artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: GitKrakit-${{ inputs.version }}
+          name: GitKrakit-${{ steps.version.outputs.value }}
           path: |
             pyu-data/deploy/*
             dist/installer/*.exe
