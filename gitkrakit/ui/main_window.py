@@ -417,6 +417,7 @@ class MainWindow(QMainWindow):
         self.sidebar.open_repo_requested.connect(self.open_repo)
         self.sidebar.checkout_requested.connect(self._checkout_branch)
         self.sidebar.branch_delete_requested.connect(self._delete_branch)
+        self.sidebar.merge_requested.connect(self._merge_branch)
         self.sidebar.gitflow_init_requested.connect(self._gitflow_init)
         self.sidebar.gitflow_start_requested.connect(self._gitflow_start)
         self.sidebar.gitflow_finish_requested.connect(self._gitflow_finish)
@@ -778,6 +779,28 @@ class MainWindow(QMainWindow):
         except GitBackendError as exc:
             QMessageBox.critical(self, "Erreur", str(exc))
             return
+        self.refresh_all()
+
+    def _merge_branch(self, source: str) -> None:
+        if not self.backend.is_open or self._is_busy:
+            return
+        target = self.backend.current_branch
+        answer = QMessageBox.question(
+            self,
+            "Merge",
+            f"Fusionner '{source}' dans '{target}' ?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        try:
+            message = self.backend.merge_branch(source)
+        except GitBackendError as exc:
+            QMessageBox.critical(self, "Erreur", str(exc))
+            self.refresh_all()
+            return
+        self.statusBar().showMessage(message, 5000)
         self.refresh_all()
 
     def _delete_branch(self, name: str) -> None:
