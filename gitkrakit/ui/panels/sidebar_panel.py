@@ -123,6 +123,7 @@ class SidebarPanel(QWidget):
     open_repo_requested = Signal(str)
     checkout_requested = Signal(str)
     branch_delete_requested = Signal(str)
+    merge_requested = Signal(str)                # branche source à fusionner dans la courante
     gitflow_init_requested = Signal()
     gitflow_start_requested = Signal(str)        # kind: feature | release | hotfix
     gitflow_finish_requested = Signal(str, str)  # (kind, nom court)
@@ -535,6 +536,16 @@ class SidebarPanel(QWidget):
         elif kind == K_GITFLOW_INIT:
             self.gitflow_init_requested.emit()
 
+    def _add_merge_action(self, menu: QMenu, source: str) -> None:
+        """Ajoute « Merge <source> dans <branche courante> » (sauf sur la branche courante)."""
+        if not self._current_branch or source == self._current_branch:
+            return
+        menu.addAction(
+            app_icon("merge"),
+            f"Merge {source} dans {self._current_branch}",
+            lambda: self.merge_requested.emit(source),
+        )
+
     def _show_context_menu(self, tree: QTreeWidget, pos) -> None:
         item = tree.itemAt(pos)
         menu = QMenu(self)
@@ -562,6 +573,7 @@ class SidebarPanel(QWidget):
             menu.addAction(app_icon("open"), "Ouvrir", lambda: self.open_repo_requested.emit(data))
         elif kind == K_LOCAL_BRANCH:
             menu.addAction(app_icon("checkout"), "Checkout", lambda: self.checkout_requested.emit(data))
+            self._add_merge_action(menu, data)
             menu.addAction(
                 app_icon("clear"), "Supprimer la branche", lambda: self._confirm_delete_branch(data)
             )
@@ -595,6 +607,7 @@ class SidebarPanel(QWidget):
                 K_GF_HOTFIX: "Terminer le hotfix (merge main + develop, tag)",
             }[kind]
             menu.addAction(app_icon("checkout"), "Checkout", lambda: self.checkout_requested.emit(full))
+            self._add_merge_action(menu, full)
             menu.addAction(
                 app_icon("merge"), finish_label, lambda: self.gitflow_finish_requested.emit(kind, data)
             )

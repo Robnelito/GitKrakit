@@ -175,6 +175,22 @@ class GitBackend:
             raise GitBackendError(f"Échec du checkout '{branch_name}': {exc}") from exc
 
     @_synchronized
+    def merge_branch(self, source: str) -> str:
+        """Fusionne `source` dans la branche courante."""
+        self._require_repo()
+        target = self.repo.active_branch.name
+        if source == target:
+            raise GitBackendError("Impossible de fusionner une branche dans elle-même.")
+        try:
+            self.repo.git.merge("--no-ff", "-m", f"Merge branch '{source}' into {target}", source)
+        except git.GitCommandError as exc:
+            raise GitBackendError(
+                f"Conflit ou échec du merge de '{source}' dans '{target}': {exc}\n"
+                "Résous les conflits puis commit avant de recommencer."
+            ) from exc
+        return f"'{source}' fusionnée dans '{target}'"
+
+    @_synchronized
     def delete_branch(self, branch_name: str, force: bool = False) -> None:
         self._require_repo()
         try:
