@@ -58,6 +58,12 @@ Dans le panneau **Staging**, indexe les fichiers, choisis l'agent, puis clique
 sur **Générer via ACP**. Le résultat remplit l'éditeur ; GitKrakit ne crée
 jamais le commit automatiquement.
 
+**Fichier > Préférences…** (`Ctrl+,`) ouvre un interrupteur par agent : seuls
+les agents activés apparaissent dans la liste du panneau Staging, et un agent
+désactivé n'est jamais démarré. Les deux agents sont actifs par défaut ; si
+aucun ne l'est, le bouton **Générer via ACP** reste indisponible. Le choix est
+persisté dans les réglages de l'application.
+
 La session de génération est isolée en lecture seule. Les permissions d'outil
 sont refusées, les instructions éventuellement présentes dans le diff sont
 traitées comme des données non fiables, et les sorties non conformes à
@@ -131,6 +137,7 @@ GitKrakit/
 ├── main.py                        # point d'entrée (mince : QApplication + MainWindow)
 ├── gitkrakit/
 │   ├── theme.py                   # palette et feuille de style centralisées
+│   ├── preferences.py             # préférences persistées (agents ACP actifs)
 │   ├── core/                      # logique métier, aucune dépendance Qt
 │   │   ├── command_parser.py      # arguments du terminal intégré
 │   │   ├── acp_commit.py          # client ACP + prompt Conventional Commits
@@ -143,6 +150,7 @@ GitKrakit/
 │   └── ui/                        # couche PySide6
 │       ├── main_window.py         # orchestration : relie backend et panneaux
 │       ├── graph_view.py          # rendu du graphe (QGraphicsView)
+│       ├── preferences_dialog.py  # interrupteurs d'activation des agents ACP
 │       └── panels/                # vues "muettes" (signaux, pas de logique Git)
 │           ├── sidebar_panel.py   # dépôts, workspaces, branches, tags, Git Flow
 │           ├── staging_panel.py   # stage/unstage + message de commit

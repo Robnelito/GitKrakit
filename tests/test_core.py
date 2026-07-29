@@ -7,7 +7,7 @@ from pathlib import Path
 
 from git import Repo
 
-from gitkrakit import theme
+from gitkrakit import preferences, theme
 from gitkrakit.core import CommitInfo, GitBackend, GraphLayout, parse_unified_diff, split_command
 from gitkrakit.core.acp_commit import (
     AcpCommitError,
@@ -108,6 +108,26 @@ class WorkspaceManagerTests(unittest.TestCase):
             manager.create_workspace("Client")
             with self.assertRaises(WorkspaceError):
                 manager.create_workspace("Client")
+
+
+class PreferencesTests(unittest.TestCase):
+    def test_normalizes_provider_ids_to_display_order(self) -> None:
+        self.assertEqual(
+            preferences.normalize_provider_ids(["claude", "codex", "claude"]),
+            list(preferences.ACP_PROVIDER_ORDER),
+        )
+
+    def test_drops_unknown_providers_and_empty_selections(self) -> None:
+        self.assertEqual(preferences.normalize_provider_ids(["gemini"]), [])
+        self.assertEqual(preferences.normalize_provider_ids(None), [])
+        self.assertEqual(preferences.normalize_provider_ids("codex"), ["codex"])
+
+    def test_reads_qsettings_string_booleans(self) -> None:
+        self.assertTrue(preferences.as_bool("true"))
+        self.assertFalse(preferences.as_bool("false"))
+        self.assertFalse(preferences.as_bool(0))
+        self.assertTrue(preferences.as_bool(None))
+        self.assertFalse(preferences.as_bool(None, default=False))
 
 
 class GitBackendTests(unittest.TestCase):

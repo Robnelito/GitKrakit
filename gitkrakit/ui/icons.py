@@ -53,6 +53,7 @@ _ICON_PARTS = {
     "merge": '<circle cx="6" cy="5" r="2"/><circle cx="18" cy="5" r="2"/><circle cx="12" cy="19" r="2"/><path d="M6 7v2c0 4 6 4 6 8M18 7v2c0 4-6 4-6 8"/>',
     "close": '<path d="m6 6 12 12M18 6 6 18"/>',
     "toolbar": '<path d="M4 5h16v14H4Z"/><path d="M4 9h16M8 5v4"/>',
+    "settings": '<path d="M5 21v-7M5 10V3M12 21v-9M12 8V3M19 21v-5M19 12V3"/><path d="M2.5 14h5M9.5 8h5M16.5 16h5"/>',
 }
 
 

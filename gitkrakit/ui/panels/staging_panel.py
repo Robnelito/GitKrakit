@@ -92,16 +92,12 @@ class StagingPanel(QWidget):
         self.agent_combo = QComboBox()
         self.agent_combo.setAccessibleName("Agent ACP pour le message de commit")
         self.agent_combo.setToolTip("Choisir l'agent local utilisé via ACP")
-        self.agent_combo.addItem("Codex CLI", "codex")
-        self.agent_combo.addItem("Claude Code", "claude")
         generator_row.addWidget(self.agent_combo, stretch=1)
 
         self.generate_btn = QPushButton(app_icon("sparkles"), "Générer via ACP")
         self.generate_btn.setIconSize(QSize(18, 18))
-        self.generate_btn.setToolTip(
-            "Analyser uniquement le diff indexé et proposer un message Conventional Commit"
-        )
         self.generate_btn.clicked.connect(self._emit_generate_message)
+        self._update_generate_tooltip()
         generator_row.addWidget(self.generate_btn)
         layout.addLayout(generator_row)
 
@@ -141,6 +137,30 @@ class StagingPanel(QWidget):
             item.setToolTip(f.status)
             list_widget.addItem(item)
 
+    def set_available_agents(self, agents: list[tuple[str, str]]) -> None:
+        """Re-fill the ACP agent list, keeping the current choice when possible."""
+        previous = self.agent_combo.currentData()
+        self.agent_combo.blockSignals(True)
+        self.agent_combo.clear()
+        for provider_id, label in agents:
+            self.agent_combo.addItem(label, provider_id)
+        index = self.agent_combo.findData(previous)
+        self.agent_combo.setCurrentIndex(max(index, 0))
+        self.agent_combo.blockSignals(False)
+        self.agent_combo.setEnabled(bool(agents))
+        self._update_generate_tooltip()
+        self._update_buttons()
+
+    def _update_generate_tooltip(self) -> None:
+        if self.agent_combo.count():
+            self.generate_btn.setToolTip(
+                "Analyser uniquement le diff indexé et proposer un message Conventional Commit"
+            )
+        else:
+            self.generate_btn.setToolTip(
+                "Active au moins un agent ACP dans Fichier > Préférences…"
+            )
+
     def clear_message(self) -> None:
         self.commit_message_edit.clear()
 
@@ -154,7 +174,7 @@ class StagingPanel(QWidget):
         self.unstage_btn.setEnabled(bool(self.staged_list.selectedItems()))
         has_message = bool(self.commit_message_edit.toPlainText().strip())
         self.commit_btn.setEnabled(self._staged_count > 0 and has_message)
-        self.generate_btn.setEnabled(self._staged_count > 0)
+        self.generate_btn.setEnabled(self._staged_count > 0 and self.agent_combo.count() > 0)
 
     # ------------------------------------------------------------------
     def _emit_stage(self) -> None:
