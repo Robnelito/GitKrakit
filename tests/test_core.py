@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from datetime import datetime
 from pathlib import Path
 
+# Les tests de widgets n'ouvrent aucune fenêtre : à poser avant tout import Qt.
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
 from git import Repo
+
+from PySide6.QtWidgets import QApplication
 
 from gitkrakit import preferences, theme
 from gitkrakit.core import CommitInfo, GitBackend, GraphLayout, parse_unified_diff, split_command
@@ -14,6 +20,7 @@ from gitkrakit.core.acp_commit import (
     build_commit_prompt,
     normalize_commit_message,
 )
+from gitkrakit.ui.panels import SidebarPanel
 from gitkrakit.workspace import WorkspaceError, WorkspaceManager
 
 
@@ -128,6 +135,91 @@ class PreferencesTests(unittest.TestCase):
         self.assertFalse(preferences.as_bool(0))
         self.assertTrue(preferences.as_bool(None))
         self.assertFalse(preferences.as_bool(None, default=False))
+
+
+class SidebarExpansionTests(unittest.TestCase):
+    """Le repli des dossiers de branches doit survivre au rafraîchissement."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self) -> None:
+        self._directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self._directory.cleanup)
+        manager = WorkspaceManager(Path(self._directory.name) / "workspaces.json")
+        self.panel = SidebarPanel(manager)
+        self.addCleanup(self.panel.deleteLater)
+
+    def _refresh(self, local: list[str]) -> None:
+        self.panel.update_refs(
+            local=local,
+            remote=["origin/main", "origin/feature/a"],
+            tags=["v1.0.0"],
+            current_branch="main",
+        )
+
+    def _section(self, title: str):
+        tree = self.panel.refs_tree
+        for index in range(tree.topLevelItemCount()):
+            item = tree.topLevelItem(index)
+            if item.text(0) == title:
+                return item
+        raise AssertionError(f"section absente : {title}")
+
+    @staticmethod
+    def _child(parent, label: str):
+        for index in range(parent.childCount()):
+            child = parent.child(index)
+            if child.text(0) == label:
+                return child
+        raise AssertionError(f"élément absent : {label}")
+
+    def test_collapsed_folder_stays_collapsed_after_refresh(self) -> None:
+        self._refresh(["main", "feature/a", "feature/b"])
+        folder = self._child(self._section("Local"), "feature")
+        self.assertTrue(folder.isExpanded())
+        folder.setExpanded(False)
+
+        self._refresh(["main", "feature/a", "feature/b", "feature/c"])
+        folder = self._child(self._section("Local"), "feature")
+        self.assertFalse(folder.isExpanded())
+        self.assertEqual(folder.childCount(), 3)  # la nouvelle branche est bien là
+
+    def test_collapsed_section_stays_collapsed_and_others_stay_open(self) -> None:
+        self._refresh(["main", "feature/a"])
+        self._section("Remote").setExpanded(False)
+
+        self._refresh(["main", "feature/a"])
+        self.assertFalse(self._section("Remote").isExpanded())
+        self.assertTrue(self._section("Local").isExpanded())
+        self.assertTrue(self._section("Tags").isExpanded())
+
+    def test_reopening_a_folder_is_remembered_too(self) -> None:
+        self._refresh(["main", "feature/a"])
+        self._child(self._section("Local"), "feature").setExpanded(False)
+        self._refresh(["main", "feature/a"])
+        self._child(self._section("Local"), "feature").setExpanded(True)
+
+        self._refresh(["main", "feature/a"])
+        self.assertTrue(self._child(self._section("Local"), "feature").isExpanded())
+
+    def test_new_folder_opens_by_default(self) -> None:
+        self._refresh(["main", "feature/a"])
+        self._child(self._section("Local"), "feature").setExpanded(False)
+
+        self._refresh(["main", "feature/a", "hotfix/urgent"])
+        self.assertFalse(self._child(self._section("Local"), "feature").isExpanded())
+        self.assertTrue(self._child(self._section("Local"), "hotfix").isExpanded())
+
+    def test_closed_repository_does_not_erase_the_memory(self) -> None:
+        self._refresh(["main", "feature/a"])
+        self._child(self._section("Local"), "feature").setExpanded(False)
+
+        self.panel._repo_open = False  # dépôt refermé : placeholder à la place
+        self.panel.refresh()
+        self._refresh(["main", "feature/a"])
+        self.assertFalse(self._child(self._section("Local"), "feature").isExpanded())
 
 
 class GitBackendTests(unittest.TestCase):
