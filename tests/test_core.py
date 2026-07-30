@@ -11,6 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from git import Repo
 
+from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QApplication
 
 from gitkrakit import preferences, theme
@@ -21,6 +22,7 @@ from gitkrakit.core.acp_commit import (
     normalize_commit_message,
 )
 from gitkrakit.ui.panels import SidebarPanel
+from gitkrakit.ui.panels.sidebar_panel import _expansion_key
 from gitkrakit.workspace import WorkspaceError, WorkspaceManager
 
 
@@ -138,7 +140,8 @@ class PreferencesTests(unittest.TestCase):
 
 
 class SidebarExpansionTests(unittest.TestCase):
-    """Le repli des dossiers de branches doit survivre au rafraîchissement."""
+    """Le repli des dossiers de branches doit survivre au rafraîchissement
+    comme à la fermeture de l'application."""
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -147,9 +150,22 @@ class SidebarExpansionTests(unittest.TestCase):
     def setUp(self) -> None:
         self._directory = tempfile.TemporaryDirectory()
         self.addCleanup(self._directory.cleanup)
+
+        # Réglages isolés : les tests ne doivent jamais écrire dans la
+        # configuration réelle de l'utilisateur.
+        settings_path = str(Path(self._directory.name) / "settings.ini")
+        original_settings = preferences._settings
+        preferences._settings = lambda: QSettings(settings_path, QSettings.IniFormat)
+        self.addCleanup(setattr, preferences, "_settings", original_settings)
+
+        self.panel = self._new_panel()
+
+    def _new_panel(self) -> SidebarPanel:
+        """Une nouvelle instance équivaut à un redémarrage de l'application."""
         manager = WorkspaceManager(Path(self._directory.name) / "workspaces.json")
-        self.panel = SidebarPanel(manager)
-        self.addCleanup(self.panel.deleteLater)
+        panel = SidebarPanel(manager)
+        self.addCleanup(panel.deleteLater)
+        return panel
 
     def _refresh(self, local: list[str]) -> None:
         self.panel.update_refs(
@@ -220,6 +236,33 @@ class SidebarExpansionTests(unittest.TestCase):
         self.panel.refresh()
         self._refresh(["main", "feature/a"])
         self.assertFalse(self._child(self._section("Local"), "feature").isExpanded())
+
+    def test_collapse_survives_an_application_restart(self) -> None:
+        self._refresh(["main", "feature/a"])
+        self._child(self._section("Local"), "feature").setExpanded(False)
+        self._section("Tags").setExpanded(False)
+        # Aucun rafraîchissement entre le repli et la fermeture : le choix
+        # doit déjà être écrit sur disque.
+        self.assertEqual(
+            preferences.collapsed_sidebar_folders(),
+            {_expansion_key(("Local", "feature")), _expansion_key(("Tags",))},
+        )
+
+        self.panel = self._new_panel()
+        self._refresh(["main", "feature/a"])
+        self.assertFalse(self._child(self._section("Local"), "feature").isExpanded())
+        self.assertFalse(self._section("Tags").isExpanded())
+        self.assertTrue(self._section("Local").isExpanded())
+
+    def test_reopened_folder_is_forgotten_across_a_restart(self) -> None:
+        self._refresh(["main", "feature/a"])
+        self._child(self._section("Local"), "feature").setExpanded(False)
+        self._child(self._section("Local"), "feature").setExpanded(True)
+        self.assertEqual(preferences.collapsed_sidebar_folders(), set())
+
+        self.panel = self._new_panel()
+        self._refresh(["main", "feature/a"])
+        self.assertTrue(self._child(self._section("Local"), "feature").isExpanded())
 
 
 class GitBackendTests(unittest.TestCase):

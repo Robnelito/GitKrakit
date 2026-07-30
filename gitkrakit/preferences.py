@@ -16,6 +16,7 @@ from gitkrakit.core.acp_commit import ACP_PROVIDERS
 ACP_PROVIDER_ORDER: tuple[str, ...] = tuple(ACP_PROVIDERS)
 
 _ACP_ENABLED_PREFIX = "acp/enabled"
+_SIDEBAR_COLLAPSED_KEY = "sidebar/collapsed_folders"
 
 
 def _settings() -> QSettings:
@@ -72,3 +73,19 @@ def save_enabled_acp_providers(provider_ids: Iterable[str] | str | None) -> list
     for provider_id in ACP_PROVIDER_ORDER:
         settings.setValue(f"{_ACP_ENABLED_PREFIX}/{provider_id}", provider_id in enabled)
     return enabled
+
+
+def collapsed_sidebar_folders() -> set[str]:
+    """Return the sidebar folders the user last left closed."""
+    stored = _settings().value(_SIDEBAR_COLLAPSED_KEY)
+    if stored is None:
+        return set()
+    # QSettings rend une chaîne nue quand la liste ne contenait qu'un élément.
+    if isinstance(stored, str):
+        stored = [stored]
+    return {str(value) for value in stored if str(value)}
+
+
+def save_collapsed_sidebar_folders(keys: Iterable[str]) -> None:
+    """Persist the closed sidebar folders, so they survive a restart."""
+    _settings().setValue(_SIDEBAR_COLLAPSED_KEY, sorted(str(key) for key in keys if key))

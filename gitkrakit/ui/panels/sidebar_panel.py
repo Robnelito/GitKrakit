@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gitkrakit import theme
+from gitkrakit import preferences, theme
 from gitkrakit.core import GitFlowStatus
 from gitkrakit.ui.icons import app_icon
 from gitkrakit.workspace import WorkspaceError, WorkspaceManager
@@ -148,8 +148,10 @@ class SidebarPanel(QWidget):
         self._active_repo_path: str | None = None
         self._ahead_behind: dict[str, tuple[int, int]] = {}
         # Dossiers refermés par l'utilisateur : mémorisés par chemin pour
-        # survivre à la reconstruction de l'arbre à chaque rafraîchissement.
-        self._collapsed_refs: set[str] = set()
+        # survivre à la reconstruction de l'arbre à chaque rafraîchissement,
+        # et persistés pour survivre au redémarrage de l'application.
+        self._collapsed_refs: set[str] = preferences.collapsed_sidebar_folders()
+        self._rebuilding_refs = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -198,6 +200,8 @@ class SidebarPanel(QWidget):
         self.refs_tree.setToolTip("Double-clique une branche locale pour l'extraire")
         self.refs_tree.itemDoubleClicked.connect(self._on_double_click)
         self.refs_tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.refs_tree.itemExpanded.connect(self._on_refs_expansion_changed)
+        self.refs_tree.itemCollapsed.connect(self._on_refs_expansion_changed)
         self.refs_tree.customContextMenuRequested.connect(
             lambda pos: self._show_context_menu(self.refs_tree, pos)
         )
@@ -313,8 +317,16 @@ class SidebarPanel(QWidget):
 
         # Un arbre sans dossier (dépôt fermé, placeholder) ne dit rien des
         # choix de l'utilisateur : on garde la mémoire précédente.
-        if seen_folder:
+        if seen_folder and collapsed != self._collapsed_refs:
             self._collapsed_refs = collapsed
+            preferences.save_collapsed_sidebar_folders(collapsed)
+
+    def _on_refs_expansion_changed(self, _item: QTreeWidgetItem) -> None:
+        """Record a fold as soon as the user makes it: closing the window
+        does not necessarily go through a refresh."""
+        if self._rebuilding_refs:  # dépliage programmatique, pas un choix
+            return
+        self._remember_refs_expansion()
 
     def _restore_expansion(self, item: QTreeWidgetItem, path: tuple[str, ...]) -> None:
         """Re-apply the last collapse choice; a folder never seen opens."""
@@ -323,6 +335,15 @@ class SidebarPanel(QWidget):
     def _refresh_refs_tree(self) -> None:
         tree = self.refs_tree
         self._remember_refs_expansion()
+        # Le dépliage fait ci-dessous est programmatique : il émet
+        # itemExpanded/itemCollapsed et ne doit pas passer pour un choix.
+        self._rebuilding_refs = True
+        try:
+            self._rebuild_refs_tree(tree)
+        finally:
+            self._rebuilding_refs = False
+
+    def _rebuild_refs_tree(self, tree: QTreeWidget) -> None:
         tree.clear()
 
         if not self._repo_open:

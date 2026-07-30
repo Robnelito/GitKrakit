@@ -7,7 +7,8 @@ complet de GitKraken (voir "Limites" plus bas).
 ## Fonctionnalités
 
 - Graphe de commits visuel avec lanes colorées (branches, merges)
-- Liste des branches locales / distantes, tags
+- Liste des branches locales / distantes, tags, regroupées en dossiers ; les
+  dossiers repliés le restent après un rafraîchissement et après un redémarrage
 - Checkout d'une branche en double-clic
 - Création de branche
 - Zone de staging : indexer / désindexer des fichiers, commit
