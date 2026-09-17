@@ -138,3 +138,10 @@ class WorkspaceManager:
         self.recent.insert(0, repo_path)
         del self.recent[MAX_RECENT:]
         self._save()
+
+    def remove_recent(self, repo_path: str) -> None:
+        """Retire le dépôt de la liste des récents."""
+        repo_path = str(Path(repo_path))
+        if repo_path in self.recent:
+            self.recent.remove(repo_path)
+            self._save()
