@@ -38,7 +38,17 @@ class StagingPanel(QWidget):
 
         self.unstaged_label = QLabel("MODIFICATIONS · 0")
         self.unstaged_label.setToolTip("Fichiers modifiés qui ne seront pas dans le prochain commit")
-        layout.addWidget(self.unstaged_label)
+        unstaged_header = QHBoxLayout()
+        unstaged_header.setContentsMargins(0, 0, 0, 0)
+        unstaged_header.addWidget(self.unstaged_label, stretch=1)
+        self.stage_all_btn = QPushButton(app_icon("forward"), "Tout indexer")
+        self.stage_all_btn.setObjectName("compactButton")
+        self.stage_all_btn.setIconSize(QSize(15, 15))
+        self.stage_all_btn.setToolTip("Ajouter toutes les modifications au prochain commit")
+        self.stage_all_btn.setAccessibleName("Indexer toutes les modifications")
+        self.stage_all_btn.clicked.connect(self._emit_stage_all)
+        unstaged_header.addWidget(self.stage_all_btn)
+        layout.addLayout(unstaged_header)
         self.unstaged_list = QListWidget()
         self.unstaged_list.setAccessibleName("Fichiers non indexés")
         self.unstaged_list.setSelectionMode(QListWidget.ExtendedSelection)
@@ -59,7 +69,17 @@ class StagingPanel(QWidget):
 
         self.staged_label = QLabel("PRÊTS À COMMITTER · 0")
         self.staged_label.setToolTip("Fichiers inclus dans le prochain commit")
-        layout.addWidget(self.staged_label)
+        staged_header = QHBoxLayout()
+        staged_header.setContentsMargins(0, 0, 0, 0)
+        staged_header.addWidget(self.staged_label, stretch=1)
+        self.unstage_all_btn = QPushButton(app_icon("back"), "Tout retirer")
+        self.unstage_all_btn.setObjectName("compactButton")
+        self.unstage_all_btn.setIconSize(QSize(15, 15))
+        self.unstage_all_btn.setToolTip("Retirer tous les fichiers de l'index")
+        self.unstage_all_btn.setAccessibleName("Retirer tous les fichiers de l'index")
+        self.unstage_all_btn.clicked.connect(self._emit_unstage_all)
+        staged_header.addWidget(self.unstage_all_btn)
+        layout.addLayout(staged_header)
         self.staged_list = QListWidget()
         self.staged_list.setAccessibleName("Fichiers indexés")
         self.staged_list.setSelectionMode(QListWidget.ExtendedSelection)
@@ -113,6 +133,8 @@ class StagingPanel(QWidget):
     def apply_theme(self) -> None:
         self.stage_btn.setIcon(app_icon("forward"))
         self.unstage_btn.setIcon(app_icon("back"))
+        self.stage_all_btn.setIcon(app_icon("forward"))
+        self.unstage_all_btn.setIcon(app_icon("back"))
         self.generate_btn.setIcon(app_icon("sparkles"))
         self.commit_btn.setIcon(app_icon("commit"))
         for list_widget in (self.unstaged_list, self.staged_list):
@@ -172,6 +194,8 @@ class StagingPanel(QWidget):
     def _update_buttons(self) -> None:
         self.stage_btn.setEnabled(bool(self.unstaged_list.selectedItems()))
         self.unstage_btn.setEnabled(bool(self.staged_list.selectedItems()))
+        self.stage_all_btn.setEnabled(self.unstaged_list.count() > 0)
+        self.unstage_all_btn.setEnabled(self.staged_list.count() > 0)
         has_message = bool(self.commit_message_edit.toPlainText().strip())
         self.commit_btn.setEnabled(self._staged_count > 0 and has_message)
         self.generate_btn.setEnabled(self._staged_count > 0 and self.agent_combo.count() > 0)
@@ -187,6 +211,16 @@ class StagingPanel(QWidget):
         if paths:
             self.unstage_requested.emit(paths)
 
+    def _emit_stage_all(self) -> None:
+        paths = self._all_paths(self.unstaged_list)
+        if paths:
+            self.stage_requested.emit(paths)
+
+    def _emit_unstage_all(self) -> None:
+        paths = self._all_paths(self.staged_list)
+        if paths:
+            self.unstage_requested.emit(paths)
+
     def _emit_commit(self) -> None:
         self.commit_requested.emit(self.commit_message_edit.toPlainText().strip())
 
@@ -198,3 +232,7 @@ class StagingPanel(QWidget):
     @staticmethod
     def _selected_paths(list_widget: QListWidget) -> list[str]:
         return [i.data(Qt.UserRole) for i in list_widget.selectedItems()]
+
+    @staticmethod
+    def _all_paths(list_widget: QListWidget) -> list[str]:
+        return [list_widget.item(index).data(Qt.UserRole) for index in range(list_widget.count())]

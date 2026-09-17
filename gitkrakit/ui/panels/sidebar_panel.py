@@ -657,6 +657,11 @@ class SidebarPanel(QWidget):
             )
         elif kind == K_RECENT:
             menu.addAction(app_icon("open"), "Ouvrir", lambda: self.open_repo_requested.emit(data))
+            menu.addAction(
+                app_icon("remove"),
+                "Retirer des récents",
+                lambda: self._try(lambda: self._manager.remove_recent(data)),
+            )
         elif kind == K_LOCAL_BRANCH:
             menu.addAction(app_icon("checkout"), "Checkout", lambda: self.checkout_requested.emit(data))
             self._add_merge_action(menu, data)

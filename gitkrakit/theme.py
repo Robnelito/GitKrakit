@@ -272,6 +272,23 @@ QPushButton#primaryButton:disabled {{
     background-color: {SURFACE};
     border-color: {BORDER};
 }}
+QPushButton#compactButton {{
+    color: {TEXT_MUTED};
+    background-color: transparent;
+    border-color: transparent;
+    padding: 4px 7px;
+    font-size: 8.5pt;
+}}
+QPushButton#compactButton:hover {{
+    color: {TEXT};
+    background-color: {SURFACE};
+    border-color: {BORDER};
+}}
+QPushButton#compactButton:disabled {{
+    color: {TEXT_MUTED};
+    background-color: transparent;
+    border-color: transparent;
+}}
 
 /* ---- barre d'outils ---- */
 QToolBar {{
@@ -535,6 +552,34 @@ QToolTip {{
     color: {TEXT};
     border: 1px solid {BORDER};
     padding: 4px 6px;
+}}
+
+/* ---- accueil ---- */
+QWidget#welcomeRecentCard {{
+    background-color: {PANEL_BG};
+    border: 1px solid {BORDER};
+    border-radius: 10px;
+}}
+QLabel#welcomeRecentTitle {{
+    color: {TEXT};
+    font-size: 9pt;
+    font-weight: 600;
+}}
+QLabel#welcomeRecentHint {{
+    color: {TEXT_MUTED};
+    font-size: 9pt;
+}}
+QPushButton#welcomeRecentButton {{
+    color: {TEXT};
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 7px 9px;
+    text-align: left;
+}}
+QPushButton#welcomeRecentButton:hover {{
+    background-color: {SURFACE};
+    border-color: {BORDER};
 }}
 
 QMessageBox, QInputDialog, QFileDialog {{
