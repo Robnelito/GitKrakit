@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import Qt, QEvent, QSize, QThread, QTimer
@@ -513,12 +514,51 @@ class MainWindow(QMainWindow):
         layout.addSpacing(12)
         layout.addLayout(button_row)
 
-        hint = QLabel("Astuce : tes dépôts récents restent accessibles dans la barre latérale.")
+        self._welcome_recent_card = QWidget()
+        self._welcome_recent_card.setObjectName("welcomeRecentCard")
+        self._welcome_recent_layout = QVBoxLayout(self._welcome_recent_card)
+        self._welcome_recent_layout.setContentsMargins(12, 10, 12, 10)
+        self._welcome_recent_layout.setSpacing(2)
+        self._refresh_welcome_recents()
+        layout.addSpacing(18)
+        layout.addWidget(self._welcome_recent_card, alignment=Qt.AlignHCenter)
+
+        hint = QLabel("Astuce : tu peux aussi épingler tes dépôts dans un espace de travail, à gauche.")
         hint.setAlignment(Qt.AlignCenter)
         hint.setWordWrap(True)
         layout.addWidget(hint)
         layout.addStretch(2)
         return page
+
+    def _refresh_welcome_recents(self) -> None:
+        """Expose les derniers dépôts dès l'accueil, là où ils sont utiles."""
+        if not hasattr(self, "_welcome_recent_layout"):
+            return
+        layout = self._welcome_recent_layout
+        while layout.count():
+            item = layout.takeAt(0)
+            if widget := item.widget():
+                widget.deleteLater()
+
+        title = QLabel("REPRENDRE LE TRAVAIL")
+        title.setObjectName("welcomeRecentTitle")
+        layout.addWidget(title)
+        recent_paths = self.workspace_manager.recent[:4]
+        if not recent_paths:
+            hint = QLabel("Tes dépôts ouverts récemment apparaîtront ici.")
+            hint.setObjectName("welcomeRecentHint")
+            layout.addWidget(hint)
+            return
+
+        for repo_path in recent_paths:
+            button = QPushButton(icons.app_icon("repo", theme.ACCENT, 16), Path(repo_path).name)
+            button.setObjectName("welcomeRecentButton")
+            button.setIconSize(QSize(16, 16))
+            button.setMinimumWidth(280)
+            button.setToolTip(repo_path)
+            button.setAccessibleName(f"Ouvrir le dépôt récent {repo_path}")
+            button.clicked.connect(lambda _checked=False, path=repo_path: self.open_repo(path))
+            layout.addWidget(button)
 
     def _build_diff_page(self, diff_panel: DiffPanel) -> QWidget:
         """Page du diff dans la zone centrale : une barre avec un bouton de
@@ -699,6 +739,7 @@ class MainWindow(QMainWindow):
             self.workspace_manager.touch_recent(active_path)
         except WorkspaceError as exc:
             QMessageBox.warning(self, "Dépôts récents", str(exc))
+        self._refresh_welcome_recents()
         self.sidebar.set_active_repo(active_path)
         self.setWindowTitle(f"GitKrakit — {active_path}")
         self._close_diff()  # un diff affiché appartient à l'ancien dépôt
