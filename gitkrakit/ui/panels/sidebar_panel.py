@@ -129,6 +129,7 @@ def _style_group_header(header: QWidget, accent: str) -> None:
 
 class SidebarPanel(QWidget):
     open_repo_requested = Signal(str)
+    open_repo_new_instance_requested = Signal(str)
     checkout_requested = Signal(str)
     branch_delete_requested = Signal(str)
     merge_requested = Signal(str)                # branche source à fusionner dans la courante
@@ -657,6 +658,11 @@ class SidebarPanel(QWidget):
             )
         elif kind == K_RECENT:
             menu.addAction(app_icon("open"), "Ouvrir", lambda: self.open_repo_requested.emit(data))
+            menu.addAction(
+                app_icon("open"),
+                "Ouvrir dans une nouvelle instance",
+                lambda: self.open_repo_new_instance_requested.emit(data),
+            )
             menu.addAction(
                 app_icon("remove"),
                 "Retirer des récents",

@@ -7,6 +7,9 @@ logique Git et la gestion d'erreurs sont centralisées ici.
 """
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -420,6 +423,7 @@ class MainWindow(QMainWindow):
         # --- gauche : barre latérale unifiée ---
         self.sidebar = SidebarPanel(self.workspace_manager)
         self.sidebar.open_repo_requested.connect(self.open_repo)
+        self.sidebar.open_repo_new_instance_requested.connect(self.open_repo_in_new_instance)
         self.sidebar.checkout_requested.connect(self._checkout_branch)
         self.sidebar.branch_delete_requested.connect(self._delete_branch)
         self.sidebar.merge_requested.connect(self._merge_branch)
@@ -759,6 +763,21 @@ class MainWindow(QMainWindow):
         self._update_action_state()
         self.refresh_all()
         self._auto_fetch()
+
+    def open_repo_in_new_instance(self, path: str) -> None:
+        """Lance un second processus GitKrakit sur `path` (cf. main.py [chemin])."""
+        if getattr(sys, "frozen", False):
+            command = [sys.executable, path]
+        else:
+            script = os.path.abspath(sys.argv[0])
+            if script.endswith(".py"):
+                command = [sys.executable, script, path]
+            else:  # lanceur console installé (gitkrakit.exe)
+                command = [script, path]
+        try:
+            subprocess.Popen(command, close_fds=True)
+        except OSError as exc:
+            QMessageBox.critical(self, "Nouvelle instance", str(exc))
 
     # ------------------------------------------------------------------
     # Rafraîchissement
