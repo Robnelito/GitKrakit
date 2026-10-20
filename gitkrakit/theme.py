@@ -5,8 +5,13 @@ tous les widgets (fenêtre, graphe, panneaux) partagent la même palette.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QFont, QFontDatabase, QPalette
+
+FONTS_DIR = Path(__file__).resolve().parent / "resources" / "fonts"
+_bundled_fonts_loaded = False
 
 THEME_SYSTEM = "system"
 THEME_LIGHT = "light"
@@ -17,15 +22,26 @@ UI_FONT_FAMILY = "Segoe UI"
 MONO_FONT_FAMILY = "Consolas"
 
 
+def _load_bundled_fonts() -> None:
+    """Register the fonts shipped in resources/fonts (once per process)."""
+    global _bundled_fonts_loaded
+    if _bundled_fonts_loaded:
+        return
+    _bundled_fonts_loaded = True
+    for font_file in sorted(FONTS_DIR.glob("*.ttf")):
+        QFontDatabase.addApplicationFont(str(font_file))
+
+
 def configure_fonts(app) -> None:
     """Select modern installed fonts while retaining cross-platform fallbacks."""
     global UI_FONT_FAMILY, MONO_FONT_FAMILY
+    _load_bundled_fonts()
     available = set(QFontDatabase.families())
 
     ui_candidates = (
+        "Inter",
         "Bahnschrift",
         "Segoe UI Variable Text",
-        "Inter",
         "Segoe UI",
         "SF Pro Text",
         "Noto Sans",
