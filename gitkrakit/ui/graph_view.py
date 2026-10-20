@@ -408,11 +408,22 @@ class GraphView(QGraphicsView):
         overflow = len(refs) - drawn
         if overflow > 0 and right_edge - x >= 28:
             self._draw_chip(
-                f"+{overflow}", node.color, x, y_center, max_width=right_edge - x
+                f"+{overflow}",
+                node.color,
+                x,
+                y_center,
+                max_width=right_edge - x,
+                tooltip="\n".join(refs[drawn:]),
             )
 
     def _draw_chip(
-        self, text: str, color: str, x: float, y_center: float, max_width: float
+        self,
+        text: str,
+        color: str,
+        x: float,
+        y_center: float,
+        max_width: float,
+        tooltip: str | None = None,
     ) -> float:
         metrics = QFontMetricsF(self._chip_font)
         label_text = metrics.elidedText(text, Qt.ElideRight, max_width - 2 * CHIP_PADDING)
@@ -429,9 +440,11 @@ class GraphView(QGraphicsView):
         outline.setAlpha(190)
         chip.setPen(QPen(outline, 1))
         chip.setZValue(4)
+        chip.setToolTip(tooltip or text)
         self._scene.addItem(chip)
 
         label = QGraphicsSimpleTextItem(label_text)
+        label.setToolTip(tooltip or text)
         label.setFont(self._chip_font)
         label.setBrush(QBrush(QColor(color)))
         label.setPos(x + CHIP_PADDING, y_center - metrics.height() / 2)
