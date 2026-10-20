@@ -10,7 +10,8 @@ from pathlib import Path
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QFont, QFontDatabase, QPalette
 
-FONTS_DIR = Path(__file__).resolve().parent / "resources" / "fonts"
+RESOURCES_DIR = Path(__file__).resolve().parent / "resources"
+FONTS_DIR = RESOURCES_DIR / "fonts"
 _bundled_fonts_loaded = False
 
 THEME_SYSTEM = "system"
