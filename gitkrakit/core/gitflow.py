@@ -90,39 +90,75 @@ class GitFlow:
     # ------------------------------------------------------------------
     # Init
     # ------------------------------------------------------------------
-    def init(self) -> GitFlowConfig:
-        """Initialise Git Flow avec les valeurs par défaut : détecte la
-        branche principale (main/master), crée develop si absente et la
-        checkout, écrit la config compatible git-flow CLI."""
+    def default_config(self) -> GitFlowConfig:
+        """Valeurs proposées à l'initialisation : la branche principale est
+        détectée (main, puis master, sinon la branche courante)."""
+        cfg = GitFlowConfig()
         repo = self._repo
         if not repo.head.is_valid():
-            raise GitBackendError(
-                "Fais un premier commit avant d'initialiser Git Flow."
-            )
-
+            return cfg
         heads = [h.name for h in repo.heads]
-        cfg = GitFlowConfig()
         if "main" in heads:
             cfg.main = "main"
         elif "master" in heads:
             cfg.main = "master"
         else:
             cfg.main = self._backend.current_branch
+        return cfg
 
+    def init(self, main: str | None = None, develop: str | None = None) -> GitFlowConfig:
+        """Initialise Git Flow : écrit la config compatible git-flow CLI
+        (branches `main`/`develop` au choix, détectées par défaut), crée la
+        branche develop si absente et la checkout."""
+        repo = self._repo
+        if not repo.head.is_valid():
+            raise GitBackendError(
+                "Fais un premier commit avant d'initialiser Git Flow."
+            )
+
+        defaults = self.default_config()
+        cfg = self.configure(main or defaults.main, develop or defaults.develop)
         try:
-            repo.git.config("gitflow.branch.master", cfg.main)
-            repo.git.config("gitflow.branch.develop", cfg.develop)
             repo.git.config("gitflow.prefix.feature", cfg.feature_prefix)
             repo.git.config("gitflow.prefix.release", cfg.release_prefix)
             repo.git.config("gitflow.prefix.hotfix", cfg.hotfix_prefix)
             repo.git.config("gitflow.prefix.support", "support/")
             repo.git.config("gitflow.prefix.versiontag", "")
-
-            if cfg.develop not in heads:
-                repo.create_head(cfg.develop, cfg.main)
             repo.git.checkout(cfg.develop)
         except git.GitCommandError as exc:
             raise GitBackendError(f"Échec de l'initialisation Git Flow: {exc}") from exc
+        return cfg
+
+    def configure(self, main: str, develop: str) -> GitFlowConfig:
+        """Définit les branches principale et de développement. La branche
+        principale doit exister ; develop est créée depuis elle si absente."""
+        repo = self._repo
+        main, develop = main.strip(), develop.strip()
+        for label, name in (("principale", main), ("de développement", develop)):
+            if not name:
+                raise GitBackendError(f"Le nom de la branche {label} est vide.")
+            try:
+                repo.git.check_ref_format("--branch", name)
+            except git.GitCommandError as exc:
+                raise GitBackendError(f"Nom de branche invalide : '{name}'.") from exc
+        if main == develop:
+            raise GitBackendError(
+                "La branche principale et la branche de développement doivent différer."
+            )
+
+        heads = [h.name for h in repo.heads]
+        if main not in heads:
+            raise GitBackendError(f"La branche principale '{main}' n'existe pas.")
+        try:
+            if develop not in heads:
+                repo.create_head(develop, main)
+            repo.git.config("gitflow.branch.master", main)
+            repo.git.config("gitflow.branch.develop", develop)
+        except git.GitCommandError as exc:
+            raise GitBackendError(f"Échec de la configuration Git Flow: {exc}") from exc
+
+        cfg = self.config()
+        assert cfg is not None
         return cfg
 
     # ------------------------------------------------------------------
