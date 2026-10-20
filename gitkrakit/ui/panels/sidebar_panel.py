@@ -686,16 +686,21 @@ class SidebarPanel(QWidget):
                     app_icon("plus"),
                     "Démarrer un hotfix…", lambda: self.gitflow_start_requested.emit(K_GF_HOTFIX)
                 )
+                menu.addSeparator()
+                menu.addAction(
+                    app_icon("gitflow"), "Configurer Git Flow…", self.gitflow_init_requested.emit
+                )
         elif kind == K_GITFLOW_INIT:
             menu.addAction(
                 app_icon("gitflow"), "Initialiser Git Flow…", self.gitflow_init_requested.emit
             )
         elif kind in (K_GF_FEATURE, K_GF_RELEASE, K_GF_HOTFIX):
             full = self._gitflow_full_name(kind, data)
+            cfg = self._gitflow.config
             finish_label = {
-                K_GF_FEATURE: "Terminer la feature (merge dans develop)",
-                K_GF_RELEASE: "Terminer la release (merge main + develop, tag)",
-                K_GF_HOTFIX: "Terminer le hotfix (merge main + develop, tag)",
+                K_GF_FEATURE: f"Terminer la feature (merge dans {cfg.develop})",
+                K_GF_RELEASE: f"Terminer la release (merge {cfg.main} + {cfg.develop}, tag)",
+                K_GF_HOTFIX: f"Terminer le hotfix (merge {cfg.main} + {cfg.develop}, tag)",
             }[kind]
             menu.addAction(app_icon("checkout"), "Checkout", lambda: self.checkout_requested.emit(full))
             self._add_merge_action(menu, full)

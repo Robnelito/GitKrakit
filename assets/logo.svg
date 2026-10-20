@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="GitKrakit">
+  <!-- palette : fond #0d1117, violet #a371f7, bleu #58a6ff, blanc -->
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="#0d1117"/>
+
+  <!-- tentacules = lanes du graphe -->
+  <g fill="none" stroke="#58a6ff" stroke-width="20" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M160 282 C150 344 84 336 80 408"/>
+    <path d="M200 288 C196 350 146 362 146 430"/>
+    <path d="M240 292 C240 360 222 394 222 436"/>
+    <path d="M272 292 C272 360 290 394 290 436"/>
+    <path d="M312 288 C316 350 366 362 366 430"/>
+    <path d="M352 282 C362 344 428 336 432 408"/>
+    <!-- branche + merge entre les deux tentacules centrales -->
+    <path d="M236 356 C236 384 278 372 278 400" stroke="#ffffff" stroke-width="8"/>
+  </g>
+
+  <!-- noeuds de commit -->
+  <g fill="#0d1117" stroke="#58a6ff" stroke-width="9">
+    <circle cx="80" cy="414" r="17"/>
+    <circle cx="146" cy="440" r="17"/>
+    <circle cx="222" cy="446" r="17"/>
+    <circle cx="290" cy="446" r="17"/>
+    <circle cx="366" cy="440" r="17"/>
+    <circle cx="432" cy="414" r="17"/>
+  </g>
+  <circle cx="236" cy="356" r="8" fill="#ffffff"/>
+  <circle cx="278" cy="400" r="8" fill="#ffffff"/>
+
+  <!-- tete -->
+  <path d="M118 252 C110 120 180 54 256 54 C332 54 402 120 394 252 C394 292 360 306 330 298 C290 290 222 290 182 298 C152 306 118 292 118 252 Z" fill="#a371f7"/>
+
+  <!-- yeux -->
+  <circle cx="208" cy="202" r="31" fill="#ffffff"/>
+  <circle cx="304" cy="202" r="31" fill="#ffffff"/>
+  <circle cx="215" cy="207" r="15" fill="#0d1117"/>
+  <circle cx="297" cy="207" r="15" fill="#0d1117"/>
+
+  <!-- sourcils -->
+  <path d="M170 152 L238 176 M342 152 L274 176" fill="none" stroke="#0d1117" stroke-width="12" stroke-linecap="round"/>
+
+  <!-- bouche : noeud de commit -->
+  <circle cx="256" cy="258" r="10" fill="#0d1117"/>
+</svg>

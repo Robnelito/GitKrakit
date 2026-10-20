@@ -30,6 +30,9 @@ py-modules = ["main"]
 [tool.setuptools.packages.find]
 include = ["gitkrakit*"]
 
+[tool.setuptools.package-data]
+gitkrakit = ["resources/fonts/*"]
+
 [tool.setuptools.dynamic]
 version = {attr = "gitkrakit.__version__"}
 

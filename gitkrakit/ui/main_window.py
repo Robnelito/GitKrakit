@@ -16,6 +16,7 @@ from PySide6.QtCore import Qt, QEvent, QSize, QThread, QTimer
 from PySide6.QtGui import QAction, QActionGroup
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -40,6 +41,7 @@ from gitkrakit.core import CommitInfo, GitBackend, GitBackendError, GitFlow
 from gitkrakit.core.acp_commit import ACP_PROVIDERS
 from gitkrakit.core.acp_commit import generate_commit_message as generate_acp_commit_message
 from gitkrakit.ui import icons
+from gitkrakit.ui.gitflow_dialog import GitFlowDialog
 from gitkrakit.ui.preferences_dialog import PreferencesDialog
 from gitkrakit.ui.graph_view import GraphPanel
 from gitkrakit.ui.panels import (
@@ -184,7 +186,7 @@ class MainWindow(QMainWindow):
 
         gitflow_menu = QMenu("Git Flow", self)
         self._gitflow_init_action = gitflow_menu.addAction(
-            icons.app_icon("gitflow"), "Initialiser Git Flow…", self._gitflow_init
+            icons.app_icon("gitflow"), "Configurer Git Flow…", self._gitflow_init
         )
         gitflow_menu.addSeparator()
         self._gitflow_start_actions = [
@@ -855,7 +857,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(message, 5000)
         self.refresh_all()
 
-    def _delete_branch(self, name: str) -> None:
+    def _delete_branch(self, name: str, force: bool = False) -> None:
         if self._is_busy:
             return
         try:
@@ -1093,33 +1095,35 @@ class MainWindow(QMainWindow):
     ) -> None:
         if not self.backend.is_open or self._is_busy:
             return
-        if self.gitflow.is_initialized():
-            if after_init is not None:
-                after_init()
-            else:
-                QMessageBox.information(self, "Git Flow", "Git Flow est déjà initialisé.")
-            return
-        answer = QMessageBox.question(
-            self,
-            "Initialiser Git Flow",
-            "Initialiser Git Flow avec les valeurs par défaut ?\n\n"
-            "  branche de production : main (ou master)\n"
-            "  branche d'intégration : develop (créée si absente)\n"
-            "  préfixes : feature/  release/  hotfix/",
-        )
-        if answer != QMessageBox.Yes:
+        initialized = self.gitflow.is_initialized()
+        if initialized and after_init is not None:
+            after_init()
             return
 
-        def initialized(_result: Any) -> None:
-            self.statusBar().showMessage("Git Flow initialisé — branche develop", 5000)
+        cfg = self.gitflow.config() if initialized else self.gitflow.default_config()
+        assert cfg is not None
+        dialog = GitFlowDialog(
+            cfg.main, cfg.develop, self.backend.local_branches(), initialized, self
+        )
+        if dialog.exec() != QDialog.Accepted:
+            return
+        main, develop = dialog.values()
+
+        def configured(result: Any) -> None:
+            verb = "configuré" if initialized else "initialisé"
+            self.statusBar().showMessage(
+                f"Git Flow {verb} — {result.main} / {result.develop}", 5000
+            )
             if after_init is not None:
                 after_init()
 
-        self._start_backend_operation(
-            self.gitflow.init,
-            label="Initialisation de Git Flow…",
-            on_success=initialized,
-        )
+        if initialized:
+            fn = lambda: self.gitflow.configure(main, develop)
+            label = "Configuration de Git Flow…"
+        else:
+            fn = lambda: self.gitflow.init(main, develop)
+            label = "Initialisation de Git Flow…"
+        self._start_backend_operation(fn, label=label, on_success=configured)
 
     def _gitflow_start(self, kind: str) -> None:
         if not self.backend.is_open or self._is_busy:
@@ -1143,21 +1147,23 @@ class MainWindow(QMainWindow):
     def _gitflow_finish(self, kind: str, name: str) -> None:
         if self._is_busy:
             return
+        cfg = self.gitflow.config()
+        main, develop = (cfg.main, cfg.develop) if cfg else ("main", "develop")
         confirmations = {
             "feature": (
                 f"Terminer la feature '{name}' ?\n\n"
-                "→ merge dans develop puis suppression de la branche.",
+                f"→ merge dans {develop} puis suppression de la branche.",
                 self.gitflow.feature_finish,
             ),
             "release": (
                 f"Terminer la release '{name}' ?\n\n"
-                f"→ merge dans main, tag '{name}', merge dans develop,\n"
+                f"→ merge dans {main}, tag '{name}', merge dans {develop},\n"
                 "puis suppression de la branche.",
                 self.gitflow.release_finish,
             ),
             "hotfix": (
                 f"Terminer le hotfix '{name}' ?\n\n"
-                f"→ merge dans main, tag '{name}', merge dans develop,\n"
+                f"→ merge dans {main}, tag '{name}', merge dans {develop},\n"
                 "puis suppression de la branche.",
                 self.gitflow.hotfix_finish,
             ),

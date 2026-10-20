@@ -13,7 +13,7 @@ a = Analysis(
     [str(PROJECT_ROOT / "main.py")],
     pathex=[str(PROJECT_ROOT)],
     binaries=[],
-    datas=[],
+    datas=[(str(PROJECT_ROOT / "gitkrakit" / "resources" / "fonts"), "gitkrakit/resources/fonts")],
     hiddenimports=["pyupdater.client"],
     hookspath=[str(PYUPDATER_HOOKS)],
     hooksconfig={},

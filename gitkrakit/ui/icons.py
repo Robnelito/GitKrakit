@@ -102,7 +102,7 @@ def status_icon(status: str) -> QIcon:
         f'<rect x="2.5" y="2.5" width="19" height="19" rx="5" fill="{color}" '
         f'fill-opacity=".16" stroke="{color}" stroke-width="1.5"/>'
         f'<text x="12" y="12.5" fill="{color}" text-anchor="middle" '
-        'dominant-baseline="middle" font-family="Bahnschrift, sans-serif" '
+        f'dominant-baseline="middle" font-family="{theme.UI_FONT_FAMILY}, sans-serif" '
         f'font-size="11" font-weight="700">{letter}</text></svg>'
     )
     return _render_svg(svg, 16)
