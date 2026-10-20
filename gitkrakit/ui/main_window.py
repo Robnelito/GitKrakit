@@ -844,7 +844,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(message, 5000)
         self.refresh_all()
 
-    def _delete_branch(self, name: str) -> None:
+    def _delete_branch(self, name: str, force: bool = False) -> None:
         if self._is_busy:
             return
         try:
