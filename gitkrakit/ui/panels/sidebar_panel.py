@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gitkrakit import theme
+from gitkrakit import preferences, theme
 from gitkrakit.core import GitFlowStatus
 from gitkrakit.ui.icons import app_icon
 from gitkrakit.workspace import WorkspaceError, WorkspaceManager
@@ -56,6 +56,14 @@ K_GITFLOW_INIT = "gitflow-init"
 K_GF_FEATURE = "feature"
 K_GF_RELEASE = "release"
 K_GF_HOTFIX = "hotfix"
+
+# Séparateur de chemin d'arborescence : un caractère de contrôle, pour qu'un
+# nom de branche contenant '/' ne puisse pas fabriquer la clé d'un autre nœud.
+_PATH_SEPARATOR = "\x1f"
+
+
+def _expansion_key(path: tuple[str, ...]) -> str:
+    return _PATH_SEPARATOR.join(path)
 
 
 def _same_path(a: str, b: str) -> bool:
@@ -139,6 +147,11 @@ class SidebarPanel(QWidget):
         self._repo_open = False
         self._active_repo_path: str | None = None
         self._ahead_behind: dict[str, tuple[int, int]] = {}
+        # Dossiers refermés par l'utilisateur : mémorisés par chemin pour
+        # survivre à la reconstruction de l'arbre à chaque rafraîchissement,
+        # et persistés pour survivre au redémarrage de l'application.
+        self._collapsed_refs: set[str] = preferences.collapsed_sidebar_folders()
+        self._rebuilding_refs = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -187,6 +200,8 @@ class SidebarPanel(QWidget):
         self.refs_tree.setToolTip("Double-clique une branche locale pour l'extraire")
         self.refs_tree.itemDoubleClicked.connect(self._on_double_click)
         self.refs_tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.refs_tree.itemExpanded.connect(self._on_refs_expansion_changed)
+        self.refs_tree.itemCollapsed.connect(self._on_refs_expansion_changed)
         self.refs_tree.customContextMenuRequested.connect(
             lambda pos: self._show_context_menu(self.refs_tree, pos)
         )
@@ -279,8 +294,56 @@ class SidebarPanel(QWidget):
         if active_item is not None:
             tree.scrollToItem(active_item)
 
+    def _remember_refs_expansion(self) -> None:
+        """Snapshot the folders the user closed, before the tree is rebuilt."""
+        collapsed: set[str] = set()
+        seen_folder = False
+
+        def visit(item: QTreeWidgetItem, path: tuple[str, ...]) -> None:
+            nonlocal seen_folder
+            if item.childCount() == 0:  # une feuille ne se replie pas
+                return
+            seen_folder = True
+            if not item.isExpanded():
+                collapsed.add(_expansion_key(path))
+            for index in range(item.childCount()):
+                child = item.child(index)
+                visit(child, path + (child.text(0),))
+
+        tree = self.refs_tree
+        for index in range(tree.topLevelItemCount()):
+            section = tree.topLevelItem(index)
+            visit(section, (section.text(0),))
+
+        # Un arbre sans dossier (dépôt fermé, placeholder) ne dit rien des
+        # choix de l'utilisateur : on garde la mémoire précédente.
+        if seen_folder and collapsed != self._collapsed_refs:
+            self._collapsed_refs = collapsed
+            preferences.save_collapsed_sidebar_folders(collapsed)
+
+    def _on_refs_expansion_changed(self, _item: QTreeWidgetItem) -> None:
+        """Record a fold as soon as the user makes it: closing the window
+        does not necessarily go through a refresh."""
+        if self._rebuilding_refs:  # dépliage programmatique, pas un choix
+            return
+        self._remember_refs_expansion()
+
+    def _restore_expansion(self, item: QTreeWidgetItem, path: tuple[str, ...]) -> None:
+        """Re-apply the last collapse choice; a folder never seen opens."""
+        item.setExpanded(_expansion_key(path) not in self._collapsed_refs)
+
     def _refresh_refs_tree(self) -> None:
         tree = self.refs_tree
+        self._remember_refs_expansion()
+        # Le dépliage fait ci-dessous est programmatique : il émet
+        # itemExpanded/itemCollapsed et ne doit pas passer pour un choix.
+        self._rebuilding_refs = True
+        try:
+            self._rebuild_refs_tree(tree)
+        finally:
+            self._rebuilding_refs = False
+
+    def _rebuild_refs_tree(self, tree: QTreeWidget) -> None:
         tree.clear()
 
         if not self._repo_open:
@@ -296,13 +359,22 @@ class SidebarPanel(QWidget):
         remote_names = [n for n in self._remote if n.rsplit("/", 1)[-1] != "HEAD"]
 
         local_section = self._add_section(tree, "Local", len(self._local))
-        self._add_branch_tree(local_section, K_LOCAL_BRANCH, self._local, mark_current=True)
+        self._add_branch_tree(
+            local_section, K_LOCAL_BRANCH, self._local, mark_current=True, path=("Local",)
+        )
+        self._restore_expansion(local_section, ("Local",))
 
         remote_section = self._add_section(tree, "Remote", len(remote_names))
-        self._add_branch_tree(remote_section, K_REMOTE_BRANCH, remote_names, mark_current=False)
+        self._add_branch_tree(
+            remote_section, K_REMOTE_BRANCH, remote_names, mark_current=False, path=("Remote",)
+        )
+        self._restore_expansion(remote_section, ("Remote",))
 
         tags_section = self._add_section(tree, "Tags", len(self._tags))
-        self._add_branch_tree(tags_section, K_TAG, self._tags, mark_current=False)
+        self._add_branch_tree(
+            tags_section, K_TAG, self._tags, mark_current=False, path=("Tags",)
+        )
+        self._restore_expansion(tags_section, ("Tags",))
 
     def _build_gitflow_section(self, tree: QTreeWidget) -> None:
         status = self._gitflow
@@ -314,6 +386,7 @@ class SidebarPanel(QWidget):
             init_item.setData(0, _KIND_ROLE, K_GITFLOW_INIT)
             init_item.setForeground(0, QBrush(QColor(theme.ACCENT)))
             section.addChild(init_item)
+            self._restore_expansion(section, ("Git Flow",))
             return
 
         total = len(status.features) + len(status.releases) + len(status.hotfixes)
@@ -348,10 +421,17 @@ class SidebarPanel(QWidget):
                 self._mark_if_current(child, full_name)
                 self._set_sync_badge(child, full_name)
                 folder.addChild(child)
-            folder.setExpanded(True)
+            self._restore_expansion(folder, ("Git Flow", label))
+
+        self._restore_expansion(section, ("Git Flow",))
 
     def _add_branch_tree(
-        self, parent: QTreeWidgetItem, kind: str, names: list[str], mark_current: bool
+        self,
+        parent: QTreeWidgetItem,
+        kind: str,
+        names: list[str],
+        mark_current: bool,
+        path: tuple[str, ...] = (),
     ) -> None:
         """Regroupe des noms de branches/tags en dossiers selon les
         segments séparés par '/' (ex: "origin/feature/x" -> origin >
@@ -359,7 +439,7 @@ class SidebarPanel(QWidget):
         root: dict = {}
         for name in names:
             self._insert_branch_path(root, name.split("/"), name)
-        self._render_branch_tree(parent, root, kind, mark_current)
+        self._render_branch_tree(parent, root, kind, mark_current, path)
 
     @staticmethod
     def _insert_branch_path(node: dict, parts: list[str], full_name: str) -> None:
@@ -370,7 +450,12 @@ class SidebarPanel(QWidget):
         SidebarPanel._insert_branch_path(child, parts[1:], full_name)
 
     def _render_branch_tree(
-        self, parent: QTreeWidgetItem, node: dict, kind: str, mark_current: bool
+        self,
+        parent: QTreeWidgetItem,
+        node: dict,
+        kind: str,
+        mark_current: bool,
+        path: tuple[str, ...] = (),
     ) -> None:
         for key in sorted(k for k in node if k != "__leaves__"):
             child_node = node[key]
@@ -379,8 +464,9 @@ class SidebarPanel(QWidget):
             folder.setForeground(1, QBrush(QColor(theme.TEXT_MUTED)))
             folder.setTextAlignment(1, Qt.AlignRight | Qt.AlignVCenter)
             parent.addChild(folder)
-            self._render_branch_tree(folder, child_node, kind, mark_current)
-            folder.setExpanded(True)
+            folder_path = path + (key,)
+            self._render_branch_tree(folder, child_node, kind, mark_current, folder_path)
+            self._restore_expansion(folder, folder_path)
 
         for label, full_name in sorted(node.get("__leaves__", [])):
             item = QTreeWidgetItem([label, ""])

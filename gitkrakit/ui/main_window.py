@@ -35,10 +35,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gitkrakit import __version__, theme
+from gitkrakit import __version__, preferences, theme
 from gitkrakit.core import CommitInfo, GitBackend, GitBackendError, GitFlow
+from gitkrakit.core.acp_commit import ACP_PROVIDERS
 from gitkrakit.core.acp_commit import generate_commit_message as generate_acp_commit_message
 from gitkrakit.ui import icons
+from gitkrakit.ui.preferences_dialog import PreferencesDialog
 from gitkrakit.ui.graph_view import GraphPanel
 from gitkrakit.ui.panels import (
     DetailsPanel,
@@ -339,6 +341,7 @@ class MainWindow(QMainWindow):
         self._right_panel.setTabIcon(0, icons.app_icon("staging"))
         self._right_panel.setTabIcon(1, icons.app_icon("details"))
         self._quit_action.setIcon(icons.app_icon("close"))
+        self._preferences_action.setIcon(icons.app_icon("settings"))
         self._toolbar_toggle_action.setIcon(icons.app_icon("toolbar"))
         self._terminal_toggle_action.setIcon(icons.app_icon("terminal"))
         self._check_updates_action.setIcon(icons.app_icon("refresh"))
@@ -459,6 +462,7 @@ class MainWindow(QMainWindow):
         self.staging_panel.generate_message_requested.connect(
             self._generate_commit_message
         )
+        self._refresh_acp_agents()
         right_panel.addTab(self.staging_panel, icons.app_icon("staging"), "Staging")
         right_panel.setTabToolTip(0, "Préparer les fichiers et créer un commit")
 
@@ -608,6 +612,13 @@ class MainWindow(QMainWindow):
     def _build_menus(self) -> None:
         file_menu = self.menuBar().addMenu("&Fichier")
         file_menu.addAction(self.open_action)
+        file_menu.addSeparator()
+        self._preferences_action = QAction(icons.app_icon("settings"), "Préférences…", self)
+        self._preferences_action.setShortcut("Ctrl+,")
+        self._preferences_action.setMenuRole(QAction.PreferencesRole)  # menu applicatif macOS
+        self._preferences_action.setToolTip("Activer ou désactiver les agents ACP")
+        self._preferences_action.triggered.connect(self._open_preferences)
+        file_menu.addAction(self._preferences_action)
         file_menu.addSeparator()
         self._quit_action = QAction(icons.app_icon("close"), "Quitter", self)
         self._quit_action.setShortcut("Ctrl+Q")
@@ -913,11 +924,25 @@ class MainWindow(QMainWindow):
         self.staging_panel.clear_message()
         self.refresh_all()
 
+    def _refresh_acp_agents(self) -> None:
+        self.staging_panel.set_available_agents(preferences.enabled_acp_provider_choices())
+
+    def _open_preferences(self) -> None:
+        dialog = PreferencesDialog(self)
+        dialog.acp_providers_changed.connect(lambda _enabled: self._refresh_acp_agents())
+        dialog.exec()
+
     def _generate_commit_message(self, provider_id: str) -> None:
         if not self.backend.is_open or self._is_busy:
             return
+        if provider_id not in preferences.enabled_acp_providers():
+            self.statusBar().showMessage(
+                "Cet agent ACP est désactivé dans les préférences.", 4000
+            )
+            return
         working_dir = self.backend.working_dir
-        provider_label = "Codex CLI" if provider_id == "codex" else "Claude Code"
+        provider = ACP_PROVIDERS.get(provider_id)
+        provider_label = provider.label if provider else provider_id
 
         def generate() -> str:
             diff_text = self.backend.staged_diff()
