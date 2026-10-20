@@ -24,6 +24,7 @@ OutputBaseFilename=GitKrakit-Setup-{#AppVersion}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile=..\gitkrakit\resources\icon.ico
 CloseApplications=yes
 RestartApplications=no
 UninstallDisplayIcon={app}\{#AppExeName}

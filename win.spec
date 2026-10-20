@@ -8,12 +8,13 @@ import pyupdater
 
 PROJECT_ROOT = Path.cwd()
 PYUPDATER_HOOKS = Path(pyupdater.__file__).resolve().parent / "hooks"
+RESOURCES = PROJECT_ROOT / "gitkrakit" / "resources"
 
 a = Analysis(
     [str(PROJECT_ROOT / "main.py")],
     pathex=[str(PROJECT_ROOT)],
     binaries=[],
-    datas=[(str(PROJECT_ROOT / "gitkrakit" / "resources" / "fonts"), "gitkrakit/resources/fonts")],
+    datas=[(str(RESOURCES), "gitkrakit/resources")],
     hiddenimports=["pyupdater.client"],
     hookspath=[str(PYUPDATER_HOOKS)],
     hooksconfig={},
@@ -40,6 +41,7 @@ exe = EXE(
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,
+    icon=str(RESOURCES / "icon.ico"),
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

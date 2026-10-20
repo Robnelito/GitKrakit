@@ -86,6 +86,21 @@ def app_icon(name: str, color: str | None = None, size: int = 18) -> QIcon:
     return _render_svg(_svg_document(_ICON_PARTS[name], color or theme.TEXT), size)
 
 
+@lru_cache(maxsize=None)
+def logo_icon() -> QIcon:
+    """Application logo rendered at every common size (window, taskbar, Alt-Tab)."""
+    renderer = QSvgRenderer(str(theme.RESOURCES_DIR / "logo.svg"))
+    icon = QIcon()
+    for size in (16, 24, 32, 48, 64, 128, 256):
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        renderer.render(painter, QRectF(0, 0, size, size))
+        painter.end()
+        icon.addPixmap(pixmap)
+    return icon
+
+
 def toolbar_icon(name: str, color: str | None = None) -> QIcon:
     """Compatibility helper for the main 20 px action bar."""
     return app_icon(name, color, 20)

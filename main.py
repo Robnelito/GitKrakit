@@ -14,13 +14,21 @@ import sys
 from PySide6.QtWidgets import QApplication
 
 from gitkrakit import theme
-from gitkrakit.ui import MainWindow
+from gitkrakit.ui import MainWindow, icons
 
 
 def main() -> int:
+    if sys.platform == "win32":
+        # Sans identifiant propre, la barre des tâches regroupe l'app sous
+        # python.exe et affiche son icône à la place du logo.
+        import ctypes
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Robnelito.GitKrakit")
+
     app = QApplication(sys.argv)
     app.setOrganizationName("GitKrakit")
     app.setApplicationName("GitKrakit")
+    app.setWindowIcon(icons.logo_icon())
     theme.apply_theme(app, theme.saved_theme_mode())
 
     window = MainWindow()

@@ -105,7 +105,7 @@ class MainWindow(QMainWindow):
         self._build_status_bar()
         self._updater = UpdaterController(self)
         self._connect_updater()
-        self.setWindowIcon(icons.app_icon("repo", theme.ACCENT, 32))
+        self.setWindowIcon(icons.logo_icon())
 
         self._auto_fetch_timer = QTimer(self)
         self._auto_fetch_timer.setInterval(AUTO_FETCH_INTERVAL_MS)
@@ -335,7 +335,6 @@ class MainWindow(QMainWindow):
         for action, icon_name in action_icons.items():
             action.setIcon(icons.toolbar_icon(icon_name))
 
-        self.setWindowIcon(icons.app_icon("repo", theme.ACCENT, 32))
         self._gitflow_init_action.setIcon(icons.app_icon("gitflow"))
         for action in self._gitflow_start_actions:
             action.setIcon(icons.app_icon("plus"))
