@@ -5,10 +5,12 @@ tous les widgets (fenêtre, graphe, panneaux) partagent la même palette.
 """
 from __future__ import annotations
 
+import os
+import zlib
 from pathlib import Path
 
 from PySide6.QtCore import QSettings, Qt
-from PySide6.QtGui import QFont, QFontDatabase, QPalette
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
 
 RESOURCES_DIR = Path(__file__).resolve().parent / "resources"
 FONTS_DIR = RESOURCES_DIR / "fonts"
@@ -99,6 +101,49 @@ _LIGHT = {
 STATUS_COLORS: dict[str, str] = {}
 LANE_COLORS: list[str] = []
 CURRENT_EFFECTIVE_MODE = THEME_DARK
+
+# Teintes des instances secondaires, choisies loin du bleu de l'instance principale.
+INSTANCE_TINT_HUES = (28, 145, 280, 330, 172, 50)
+_SURFACE_TINT_RATIOS = (0.08, 0.08, 0.10, 0.14)  # BACKGROUND, PANEL_BG, SURFACE, BORDER
+_instance_hue: int | None = None
+
+
+def set_instance_hue(hue: int | None) -> None:
+    """Teinte la palette (None pour revenir aux couleurs d'origine)."""
+    global _instance_hue
+    _instance_hue = None if hue is None else hue % 360
+
+
+def hue_for_path(path: str) -> int:
+    """Teinte stable pour un dépôt : le même chemin donne toujours la même couleur."""
+    key = os.path.normcase(os.path.abspath(path))
+    return INSTANCE_TINT_HUES[zlib.crc32(key.encode("utf-8")) % len(INSTANCE_TINT_HUES)]
+
+
+def _blend(color: str, tint: QColor, ratio: float) -> str:
+    base = QColor(color)
+    mixed = QColor(
+        round(base.red() + (tint.red() - base.red()) * ratio),
+        round(base.green() + (tint.green() - base.green()) * ratio),
+        round(base.blue() + (tint.blue() - base.blue()) * ratio),
+    )
+    return mixed.name()
+
+
+def _with_hue(color: str, hue: int) -> str:
+    base = QColor(color)
+    h, s, l, _alpha = base.getHsl()
+    return QColor.fromHsl(hue, s, l).name()
+
+
+def _tinted(palette: dict, hue: int) -> dict:
+    colors = list(palette["colors"])
+    tint = QColor.fromHsl(hue, 180, 130)
+    for index, ratio in enumerate(_SURFACE_TINT_RATIOS):
+        colors[index] = _blend(colors[index], tint, ratio)
+    for index in (7, 8, 9):  # ACCENT, ACCENT_DIM, ACCENT_SOFT
+        colors[index] = _with_hue(colors[index], hue)
+    return {**palette, "colors": tuple(colors)}
 
 
 def _set_palette(palette: dict, effective_mode: str) -> None:
@@ -609,7 +654,10 @@ def apply_theme(app, mode: str) -> str:
     """Apply a requested mode and return the resolved light/dark mode."""
     effective = resolve_theme_mode(mode, system_uses_dark_mode(app))
     configure_fonts(app)
-    _set_palette(_DARK if effective == THEME_DARK else _LIGHT, effective)
+    palette = _DARK if effective == THEME_DARK else _LIGHT
+    if _instance_hue is not None:
+        palette = _tinted(palette, _instance_hue)
+    _set_palette(palette, effective)
     app.setStyleSheet(build_stylesheet())
     return effective
 

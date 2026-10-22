@@ -767,14 +767,15 @@ class MainWindow(QMainWindow):
 
     def open_repo_in_new_instance(self, path: str) -> None:
         """Lance un second processus GitKrakit sur `path` (cf. main.py [chemin])."""
+        args = ["--tint-hue", str(theme.hue_for_path(path)), path]
         if getattr(sys, "frozen", False):
-            command = [sys.executable, path]
+            command = [sys.executable, *args]
         else:
             script = os.path.abspath(sys.argv[0])
             if script.endswith(".py"):
-                command = [sys.executable, script, path]
+                command = [sys.executable, script, *args]
             else:  # lanceur console installé (gitkrakit.exe)
-                command = [script, path]
+                command = [script, *args]
         try:
             subprocess.Popen(command, close_fds=True)
         except OSError as exc:
