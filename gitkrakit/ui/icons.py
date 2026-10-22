@@ -51,6 +51,7 @@ _ICON_PARTS = {
     "rename": '<path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/>',
     "checkout": '<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>',
     "merge": '<circle cx="6" cy="5" r="2"/><circle cx="18" cy="5" r="2"/><circle cx="12" cy="19" r="2"/><path d="M6 7v2c0 4 6 4 6 8M18 7v2c0 4-6 4-6 8"/>',
+    "revert": '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>',
     "close": '<path d="m6 6 12 12M18 6 6 18"/>',
     "toolbar": '<path d="M4 5h16v14H4Z"/><path d="M4 9h16M8 5v4"/>',
     "settings": '<path d="M5 21v-7M5 10V3M12 21v-9M12 8V3M19 21v-5M19 12V3"/><path d="M2.5 14h5M9.5 8h5M16.5 16h5"/>',

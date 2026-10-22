@@ -436,6 +436,7 @@ class MainWindow(QMainWindow):
         #     quand on en sélectionne un (bascule via QStackedWidget) ---
         self.graph_panel = GraphPanel()
         self.graph_panel.commit_selected.connect(self.show_commit_details)
+        self.graph_panel.revert_requested.connect(self._revert_commit)
 
         self.diff_panel = DiffPanel()
         self.diff_page = self._build_diff_page(self.diff_panel)
@@ -868,6 +869,27 @@ class MainWindow(QMainWindow):
             return
         try:
             message = self.backend.merge_branch(source)
+        except GitBackendError as exc:
+            QMessageBox.critical(self, "Erreur", str(exc))
+            self.refresh_all()
+            return
+        self.statusBar().showMessage(message, 5000)
+        self.refresh_all()
+
+    def _revert_commit(self, sha: str) -> None:
+        if not self.backend.is_open or self._is_busy:
+            return
+        answer = QMessageBox.question(
+            self,
+            "Revert",
+            f"Créer un commit qui annule '{sha[:7]}' sur '{self.backend.current_branch}' ?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        try:
+            message = self.backend.revert_commit(sha)
         except GitBackendError as exc:
             QMessageBox.critical(self, "Erreur", str(exc))
             self.refresh_all()

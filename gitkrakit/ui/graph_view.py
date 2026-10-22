@@ -42,6 +42,7 @@ from PySide6.QtWidgets import (
     QGraphicsSimpleTextItem,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QSplitter,
     QStackedWidget,
     QVBoxLayout,
@@ -50,6 +51,7 @@ from PySide6.QtWidgets import (
 
 from gitkrakit.core import GraphLayout, GraphNode
 from gitkrakit import theme
+from gitkrakit.ui.icons import app_icon
 
 ROW_HEIGHT = 30
 LANE_WIDTH = 18
@@ -160,6 +162,7 @@ class CommitNodeItem(QGraphicsEllipseItem):
 
 class GraphView(QGraphicsView):
     commit_selected = Signal(str)
+    revert_requested = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -240,6 +243,24 @@ class GraphView(QGraphicsView):
         if current is not None:
             current.update_state()
         self.commit_selected.emit(sha)
+
+    def contextMenuEvent(self, event) -> None:
+        # les textes d'une ligne couvrent son fond : on cherche l'item porteur du commit
+        node = next(
+            (item.node for item in self.items(event.pos()) if hasattr(item, "node")), None
+        )
+        if node is None:
+            return
+        commit = node.commit
+        self.select_commit(commit.sha)
+        menu = QMenu(self)
+        revert = menu.addAction(
+            app_icon("revert"),
+            f"Revert le commit {commit.short_sha}",
+            lambda: self.revert_requested.emit(commit.sha),
+        )
+        revert.setEnabled(bool(commit.parents))
+        menu.exec(event.globalPos())
 
     def apply_theme(self) -> None:
         self._ui_font.setFamily(theme.UI_FONT_FAMILY)
@@ -488,6 +509,7 @@ class GraphPanel(QWidget):
     """
 
     commit_selected = Signal(str)
+    revert_requested = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -562,6 +584,7 @@ class GraphPanel(QWidget):
         self.view.setFrameShape(QFrame.NoFrame)
         self.view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         self.view.commit_selected.connect(self.commit_selected)
+        self.view.revert_requested.connect(self.revert_requested)
         self.empty_label = QLabel(
             "Ce dépôt ne contient encore aucun commit.\nCrée un premier commit depuis le panneau Staging."
         )

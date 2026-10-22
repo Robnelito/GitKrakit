@@ -191,6 +191,28 @@ class GitBackend:
         return f"'{source}' fusionnée dans '{target}'"
 
     @_synchronized
+    def revert_commit(self, sha: str) -> str:
+        """Crée un commit annulant `sha` (un merge est annulé par rapport à son 1er parent)."""
+        self._require_repo()
+        try:
+            commit = self.repo.commit(sha)
+        except (ValueError, git.BadName) as exc:
+            raise GitBackendError(f"Commit introuvable '{sha}': {exc}") from exc
+        if not commit.parents:
+            raise GitBackendError("Impossible de revert le commit initial du dépôt.")
+        args = ["--no-edit"]
+        if len(commit.parents) > 1:
+            args += ["-m", "1"]
+        try:
+            self.repo.git.revert(*args, sha)
+        except git.GitCommandError as exc:
+            raise GitBackendError(
+                f"Conflit ou échec du revert de '{sha[:7]}': {exc}\n"
+                "Résous les conflits puis commit, ou annule avec « git revert --abort »."
+            ) from exc
+        return f"Commit '{sha[:7]}' revert"
+
+    @_synchronized
     def delete_branch(self, branch_name: str, force: bool = False) -> None:
         self._require_repo()
         try:

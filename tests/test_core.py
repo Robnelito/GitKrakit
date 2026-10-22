@@ -15,7 +15,14 @@ from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QApplication
 
 from gitkrakit import preferences, theme
-from gitkrakit.core import CommitInfo, GitBackend, GraphLayout, parse_unified_diff, split_command
+from gitkrakit.core import (
+    CommitInfo,
+    GitBackend,
+    GitBackendError,
+    GraphLayout,
+    parse_unified_diff,
+    split_command,
+)
 from gitkrakit.core.acp_commit import (
     AcpCommitError,
     build_commit_prompt,
@@ -293,6 +300,38 @@ class GitBackendTests(unittest.TestCase):
             staged, unstaged = backend.status()
             self.assertFalse(staged)
             self.assertEqual(unstaged[0].status, "modified")
+        finally:
+            if backend is not None:
+                backend.close()
+            repo.close()
+            temporary.cleanup()
+
+    def test_revert_commit_restores_previous_content(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        directory = temporary.name
+        repo = Repo.init(directory)
+        backend: GitBackend | None = None
+        try:
+            with repo.config_writer() as config:
+                config.set_value("user", "name", "Test User")
+                config.set_value("user", "email", "test@example.test")
+
+            tracked = Path(directory) / "demo.txt"
+            backend = GitBackend(directory)
+            tracked.write_text("first\n", encoding="utf-8")
+            backend.stage(["demo.txt"])
+            backend.commit("Initial commit")
+            tracked.write_text("second\n", encoding="utf-8")
+            backend.stage(["demo.txt"])
+            backend.commit("Second commit")
+
+            log = backend.commit_log()
+            with self.assertRaises(GitBackendError):
+                backend.revert_commit(log[-1].sha)  # commit initial : rien à annuler
+
+            backend.revert_commit(log[0].sha)
+            self.assertEqual(tracked.read_text(encoding="utf-8"), "first\n")
+            self.assertIn("Revert", backend.commit_log()[0].message)
         finally:
             if backend is not None:
                 backend.close()
