@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="ALL" />
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="0f36ce7e-c5e9-4605-afa5-c58a5e801872" name="Changes" comment="feat(core): add commit revert functionality with UI integration&#10;&#10;Add `revert_commit` method in `GitBackend` to create a commit that reverts a given commit. Integrate the functionality into the UI, including a context menu option in the graph view and commit details panel to trigger the revert action. Update tests to validate the revert behavior. Bump version to 1.5.0.">
+      <change beforePath="$PROJECT_DIR$/gitkrakit/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/gitkrakit/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/gitkrakit/theme.py" beforeDir="false" afterPath="$PROJECT_DIR$/gitkrakit/theme.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/gitkrakit/ui/main_window.py" beforeDir="false" afterPath="$PROJECT_DIR$/gitkrakit/ui/main_window.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="EmbeddingIndexingInfo">
+    <option name="cachedIndexableFilesCount" value="79" />
+    <option name="fileBasedEmbeddingIndicesEnabled" value="true" />
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_BRANCH_BY_REPOSITORY">
+      <map>
+        <entry key="$PROJECT_DIR$" value="main" />
+      </map>
+    </option>
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+  </component>
+  <component name="KubernetesApiProvider">{}</component>
+  <component name="McpProjectServerCommands">
+    <commands />
+    <urls />
+  </component>
+  <component name="ProjectColorInfo"><![CDATA[{
+  "associatedIndex": 2,
+  "fromUser": false
+}]]></component>
+  <component name="ProjectId" id="3L2X7FvKKNOzV6y6RqokO8EIyNy" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "ASKED_SHARE_PROJECT_CONFIGURATION_FILES": "true",
+    "ModuleVcsDetector.initialDetectionPerformed": "true",
+    "RunOnceActivity.MCP Project settings loaded": "true",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "RunOnceActivity.typescript.service.memoryLimit.init": "true",
+    "codeWithMe.voiceChat.enabledByDefault": "false",
+    "com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1": "true",
+    "git-widget-placeholder": "develop",
+    "ignore.virus.scanning.warn.message": "true",
+    "junie.onboarding.icon.badge.shown": "true",
+    "last_opened_file_path": "D:/Work/robnelito/projets/GitKrakit",
+    "nodejs_package_manager_path": "npm",
+    "python.packages.toolwindow.project.migrated.to.right.top.v2": "true",
+    "to.speed.mode.migration.done": "true"
+  }
+}]]></component>
+  <component name="SharedIndexes">
+    <attachedChunks>
+      <set>
+        <option value="bundled-python-sdk-73a66231627c-5bd6d13a2a75-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-262.10968.92" />
+      </set>
+    </attachedChunks>
+  </component>
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="0f36ce7e-c5e9-4605-afa5-c58a5e801872" name="Changes" comment="" />
+      <created>1792652966991</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1792652966991</updated>
+      <workItem from="1792652968014" duration="310000" />
+    </task>
+    <task id="LOCAL-00001" summary="feat(core): add commit revert functionality with UI integration&#10;&#10;Add `revert_commit` method in `GitBackend` to create a commit that reverts a given commit. Integrate the functionality into the UI, including a context menu option in the graph view and commit details panel to trigger the revert action. Update tests to validate the revert behavior. Bump version to 1.5.0.">
+      <option name="closed" value="true" />
+      <created>1792653069685</created>
+      <option name="number" value="00001" />
+      <option name="presentableId" value="LOCAL-00001" />
+      <option name="project" value="LOCAL" />
+      <updated>1792653069685</updated>
+    </task>
+    <option name="localTasksCounter" value="2" />
+    <servers />
+  </component>
+  <component name="TypeScriptGeneratedFilesManager">
+    <option name="version" value="3" />
+  </component>
+  <component name="VcsManagerConfiguration">
+    <MESSAGE value="feat(core): add commit revert functionality with UI integration&#10;&#10;Add `revert_commit` method in `GitBackend` to create a commit that reverts a given commit. Integrate the functionality into the UI, including a context menu option in the graph view and commit details panel to trigger the revert action. Update tests to validate the revert behavior. Bump version to 1.5.0." />
+    <option name="LAST_COMMIT_MESSAGE" value="feat(core): add commit revert functionality with UI integration&#10;&#10;Add `revert_commit` method in `GitBackend` to create a commit that reverts a given commit. Integrate the functionality into the UI, including a context menu option in the graph view and commit details panel to trigger the revert action. Update tests to validate the revert behavior. Bump version to 1.5.0." />
+  </component>
+</project>
