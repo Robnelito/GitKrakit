@@ -4,11 +4,9 @@
     <option name="autoReloadType" value="ALL" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="0f36ce7e-c5e9-4605-afa5-c58a5e801872" name="Changes" comment="feat(core): add commit revert functionality with UI integration&#10;&#10;Add `revert_commit` method in `GitBackend` to create a commit that reverts a given commit. Integrate the functionality into the UI, including a context menu option in the graph view and commit details panel to trigger the revert action. Update tests to validate the revert behavior. Bump version to 1.5.0.">
-      <change beforePath="$PROJECT_DIR$/gitkrakit/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/gitkrakit/__init__.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/gitkrakit/theme.py" beforeDir="false" afterPath="$PROJECT_DIR$/gitkrakit/theme.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/gitkrakit/ui/main_window.py" beforeDir="false" afterPath="$PROJECT_DIR$/gitkrakit/ui/main_window.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
+    <list default="true" id="0f36ce7e-c5e9-4605-afa5-c58a5e801872" name="Changes" comment="Okay">
+      <change beforePath="$PROJECT_DIR$/.idea/gitkrakit.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/gitkrakit.iml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -27,15 +25,86 @@
     </option>
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
+  <component name="GitHubPullRequestSearchHistory"><![CDATA[{
+  "lastFilter": {
+    "state": "OPEN",
+    "assignee": "Robnelito"
+  }
+}]]></component>
+  <component name="GithubPullRequestsUISettings"><![CDATA[{
+  "selectedUrlAndAccountId": {
+    "url": "https://github.com/Robnelito/GitKrakit.git",
+    "accountId": "93e478f8-c7de-4b51-a6ac-a81afa195342"
+  }
+}]]></component>
   <component name="KubernetesApiProvider">{}</component>
   <component name="McpProjectServerCommands">
     <commands />
     <urls />
   </component>
-  <component name="ProjectColorInfo"><![CDATA[{
-  "associatedIndex": 2,
-  "fromUser": false
-}]]></component>
+  <component name="NextEditCompletionFeaturesState">
+    <decayedCancelled>
+      <entry key="MS100" value="1.0192366314585144" />
+      <entry key="MS500" value="1.4544415495982619" />
+      <entry key="S2" value="1.9823417092631526" />
+      <entry key="S5" value="2.406388530224749" />
+      <entry key="S10" value="2.6557866354564883" />
+      <entry key="S30" value="2.872499893959961" />
+      <entry key="S60" value="2.9344911157570923" />
+      <entry key="M2" value="2.9667925396508847" />
+      <entry key="M5" value="2.9866065408469114" />
+      <entry key="M10" value="2.9932847100348754" />
+      <entry key="M15" value="2.995519004465778" />
+      <entry key="M30" value="2.997757431690508" />
+      <entry key="H1" value="2.9988781976908196" />
+      <entry key="H2" value="2.999438969241889" />
+      <entry key="H4" value="2.999719452211947" />
+      <entry key="D1" value="2.9999532375333855" />
+      <entry key="W1" value="2.9999933195373663" />
+    </decayedCancelled>
+    <decayedSelected>
+      <entry key="MS100" value="0.0" />
+      <entry key="MS500" value="0.0" />
+      <entry key="S2" value="0.0" />
+      <entry key="S5" value="0.0" />
+      <entry key="S10" value="0.0" />
+      <entry key="S30" value="0.0" />
+      <entry key="S60" value="0.0" />
+      <entry key="M2" value="0.0" />
+      <entry key="M5" value="0.0" />
+      <entry key="M10" value="0.0" />
+      <entry key="M15" value="0.0" />
+      <entry key="M30" value="0.0" />
+      <entry key="H1" value="0.0" />
+      <entry key="H2" value="0.0" />
+      <entry key="H4" value="0.0" />
+      <entry key="D1" value="0.0" />
+      <entry key="W1" value="0.0" />
+    </decayedSelected>
+    <decayedShown>
+      <entry key="MS100" value="0.9778454804971819" />
+      <entry key="MS500" value="1.4429677666941771" />
+      <entry key="S2" value="1.9754080715635132" />
+      <entry key="S5" value="2.4007886565600116" />
+      <entry key="S10" value="2.6520594150548584" />
+      <entry key="S30" value="2.870979574010861" />
+      <entry key="S60" value="2.9336906311093736" />
+      <entry key="M2" value="2.96638174855014" />
+      <entry key="M5" value="2.9864396306208816" />
+      <entry key="M10" value="2.9932008173555227" />
+      <entry key="M15" value="2.995462978382184" />
+      <entry key="M30" value="2.997729369734598" />
+      <entry key="H1" value="2.998864154465787" />
+      <entry key="H2" value="2.9994319445652815" />
+      <entry key="H4" value="2.99971593910733" />
+      <entry key="D1" value="2.999952651909492" />
+      <entry key="W1" value="2.9999932358742023" />
+    </decayedShown>
+  </component>
+  <component name="ProjectColorInfo">{
+  &quot;associatedIndex&quot;: 2,
+  &quot;fromUser&quot;: false
+}</component>
   <component name="ProjectId" id="3L2X7FvKKNOzV6y6RqokO8EIyNy" />
   <component name="ProjectViewState">
     <option name="hideEmptyMiddlePackages" value="true" />
@@ -55,6 +124,7 @@
     "ignore.virus.scanning.warn.message": "true",
     "junie.onboarding.icon.badge.shown": "true",
     "last_opened_file_path": "D:/Work/robnelito/projets/GitKrakit",
+    "node.js.selected.package.tslint": "(autodetect)",
     "nodejs_package_manager_path": "npm",
     "python.packages.toolwindow.project.migrated.to.right.top.v2": "true",
     "to.speed.mode.migration.done": "true"
@@ -84,7 +154,23 @@
       <option name="project" value="LOCAL" />
       <updated>1792653069685</updated>
     </task>
-    <option name="localTasksCounter" value="2" />
+    <task id="LOCAL-00002" summary="Okay">
+      <option name="closed" value="true" />
+      <created>1792653481235</created>
+      <option name="number" value="00002" />
+      <option name="presentableId" value="LOCAL-00002" />
+      <option name="project" value="LOCAL" />
+      <updated>1792653481235</updated>
+    </task>
+    <task id="LOCAL-00003" summary="Okay">
+      <option name="closed" value="true" />
+      <created>1792653501826</created>
+      <option name="number" value="00003" />
+      <option name="presentableId" value="LOCAL-00003" />
+      <option name="project" value="LOCAL" />
+      <updated>1792653501826</updated>
+    </task>
+    <option name="localTasksCounter" value="4" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -92,6 +178,8 @@
   </component>
   <component name="VcsManagerConfiguration">
     <MESSAGE value="feat(core): add commit revert functionality with UI integration&#10;&#10;Add `revert_commit` method in `GitBackend` to create a commit that reverts a given commit. Integrate the functionality into the UI, including a context menu option in the graph view and commit details panel to trigger the revert action. Update tests to validate the revert behavior. Bump version to 1.5.0." />
-    <option name="LAST_COMMIT_MESSAGE" value="feat(core): add commit revert functionality with UI integration&#10;&#10;Add `revert_commit` method in `GitBackend` to create a commit that reverts a given commit. Integrate the functionality into the UI, including a context menu option in the graph view and commit details panel to trigger the revert action. Update tests to validate the revert behavior. Bump version to 1.5.0." />
+    <MESSAGE value="feat(theme): add instance tinting with unique hues for secondary sessions&#10;&#10;Introduce `--tint-hue` CLI argument to distinguish secondary GitKrakit instances by applying unique color tints. Compute stable instance hues for repository paths and integrate into the theme system. Update `MainWindow` to pass tint hues to new instances. Bump version to 1.6.0." />
+    <MESSAGE value="Okay" />
+    <option name="LAST_COMMIT_MESSAGE" value="Okay" />
   </component>
 </project>
