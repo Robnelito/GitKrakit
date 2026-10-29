@@ -16,13 +16,14 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import Qt, QEvent, QSize, QThread, QTimer
-from PySide6.QtGui import QAction, QActionGroup
+from PySide6.QtGui import QAction, QActionGroup, QValidator
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QFileDialog,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -58,6 +59,26 @@ from gitkrakit.ui.updater import UpdateBanner, UpdaterController
 from gitkrakit.workspace import WorkspaceError, WorkspaceManager
 
 AUTO_FETCH_INTERVAL_MS = 5 * 60 * 1000  # 5 minutes
+
+
+class _SpaceToDashValidator(QValidator):
+    """Remplace les espaces par des '-' pendant la saisie (frappe ou collage)."""
+
+    def validate(self, text: str, pos: int):
+        return QValidator.Acceptable, text.replace(" ", "-"), pos
+
+
+def _ask_ref_name(parent: QWidget, title: str, label: str) -> tuple[str, bool]:
+    """Équivalent de QInputDialog.getText pour un nom de branche/version :
+    les espaces saisis sont traduits en '-'."""
+    dialog = QInputDialog(parent)
+    dialog.setWindowTitle(title)
+    dialog.setLabelText(label)
+    edit = dialog.findChild(QLineEdit)
+    if edit is not None:
+        edit.setValidator(_SpaceToDashValidator(edit))
+    ok = dialog.exec() == QDialog.Accepted
+    return dialog.textValue(), ok
 
 
 class _OperationThread(QThread):
@@ -928,7 +949,7 @@ class MainWindow(QMainWindow):
     def create_branch_dialog(self) -> None:
         if not self.backend.is_open or self._is_busy:
             return
-        name, ok = QInputDialog.getText(self, "Nouvelle branche", "Nom de la branche :")
+        name, ok = _ask_ref_name(self, "Nouvelle branche", "Nom de la branche :")
         if not ok or not name.strip():
             return
         try:
@@ -1178,7 +1199,7 @@ class MainWindow(QMainWindow):
             "hotfix": ("Nouveau hotfix", "Version (ex: 1.2.1) :", self.gitflow.hotfix_start),
         }
         title, label, start_fn = prompts[kind]
-        name, ok = QInputDialog.getText(self, title, label)
+        name, ok = _ask_ref_name(self, title, label)
         if not ok or not name.strip():
             return
         self._run_backend_op(
