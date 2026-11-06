@@ -7,6 +7,7 @@ from gitkrakit.core.git_backend import (
     FileStatus,
     GitBackend,
     GitBackendError,
+    RefsSnapshot,
 )
 from gitkrakit.core.gitflow import GitFlow, GitFlowConfig, GitFlowStatus
 from gitkrakit.core.graph_model import GraphLayout, GraphNode
@@ -22,6 +23,7 @@ __all__ = [
     "GitFlowStatus",
     "GraphLayout",
     "GraphNode",
+    "RefsSnapshot",
     "parse_unified_diff",
     "split_command",
 ]

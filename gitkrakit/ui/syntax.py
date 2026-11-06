@@ -187,24 +187,33 @@ def _escape(text: str) -> str:
     return html.escape(text, quote=False).replace(" ", "&nbsp;")
 
 
+def highlight_spans(text: str, language: str | None) -> list[tuple[str, str | None]]:
+    """Découpe `text` en segments `(texte, couleur ou None)`. Sert au rendu par
+    peinture directe (delegate) : aucun widget, aucun HTML. Un langage inconnu
+    donne un unique segment sans couleur."""
+    pattern = _compiled_pattern(language) if language else None
+    if pattern is None or not text:
+        return [(text, None)] if text else []
+
+    colors = _syntax_colors()
+    spans: list[tuple[str, str | None]] = []
+    last_end = 0
+    for match in pattern.finditer(text):
+        if match.start() > last_end:
+            spans.append((text[last_end : match.start()], None))
+        spans.append((match.group(), colors.get(match.lastgroup)))
+        last_end = match.end()
+    if last_end < len(text):
+        spans.append((text[last_end:], None))
+    return spans
+
+
 def highlight_line(text: str, language: str | None) -> str:
     """Retourne `text` en HTML riche (compatible QLabel), avec les jetons
     reconnus enveloppés dans des <span style=color:...>. Si le langage est
     inconnu ou non supporté, retourne le texte simplement échappé."""
-    pattern = _compiled_pattern(language) if language else None
-    if pattern is None or not text:
-        return _escape(text)
-
-    html_parts: list[str] = []
-    colors = _syntax_colors()
-    last_end = 0
-    for match in pattern.finditer(text):
-        if match.start() > last_end:
-            html_parts.append(_escape(text[last_end : match.start()]))
-        color = colors.get(match.lastgroup)
-        token = _escape(match.group())
-        html_parts.append(f'<span style="color:{color}">{token}</span>' if color else token)
-        last_end = match.end()
-    if last_end < len(text):
-        html_parts.append(_escape(text[last_end:]))
-    return "".join(html_parts)
+    parts = []
+    for token, color in highlight_spans(text, language):
+        escaped = _escape(token)
+        parts.append(f'<span style="color:{color}">{escaped}</span>' if color else escaped)
+    return "".join(parts)
