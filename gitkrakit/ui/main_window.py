@@ -113,6 +113,13 @@ class MainWindow(QMainWindow):
         self._operation_on_success: Callable[[Any], None] | None = None
         self._operation_on_error: Callable[[str], None] | None = None
         self._close_when_idle = False
+        # Fetch automatique : thread dédié, qui ne passe PAS par _is_busy pour
+        # que l'interface reste utilisable pendant le transfert réseau.
+        self._fetch_thread: _OperationThread | None = None
+        self._fetch_repo_path: str | None = None
+        self._fetch_rerun = False
+        self._active_repo_path: str | None = None
+        self._refs_signature: tuple | None = None
         self.gitflow = GitFlow(self.backend)
         self.workspace_manager = WorkspaceManager()
         self._commits_by_sha: dict[str, CommitInfo] = {}
@@ -154,6 +161,12 @@ class MainWindow(QMainWindow):
             )
             event.ignore()
             return
+        if self._fetch_thread is not None and self._fetch_thread.isRunning():
+            # on laisse une chance au fetch de se terminer proprement avant de
+            # l'interrompre (un kill brutal peut laisser des fichiers .lock)
+            if not self._fetch_thread.wait(2000):
+                self.backend.cancel_background_fetch()
+                self._fetch_thread.wait(3000)
         self.backend.close()
         super().closeEvent(event)
 
@@ -181,19 +194,25 @@ class MainWindow(QMainWindow):
         self.fetch_action = QAction(icons.toolbar_icon("fetch"), "Fetch", self)
         self.fetch_action.setToolTip("Récupérer les références de origin")
         self.fetch_action.triggered.connect(
-            lambda: self._run_backend_op(self.backend.fetch, label="Fetch en cours…")
+            lambda: self._run_backend_op(
+                self.backend.fetch, label="Fetch en cours…", remote=True
+            )
         )
 
         self.pull_action = QAction(icons.toolbar_icon("pull"), "Pull", self)
         self.pull_action.setToolTip("Récupérer et intégrer les commits de origin")
         self.pull_action.triggered.connect(
-            lambda: self._run_backend_op(self.backend.pull, label="Pull en cours…")
+            lambda: self._run_backend_op(
+                self.backend.pull, label="Pull en cours…", remote=True
+            )
         )
 
         self.push_action = QAction(icons.toolbar_icon("push"), "Push", self)
         self.push_action.setToolTip("Publier les commits vers origin")
         self.push_action.triggered.connect(
-            lambda: self._run_backend_op(self.backend.push, label="Push en cours…")
+            lambda: self._run_backend_op(
+                self.backend.push, label="Push en cours…", remote=True
+            )
         )
         sync_group = self._toolbar_group(
             self._make_toolbar_button(self.fetch_action),
@@ -773,6 +792,8 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Dépôt Git invalide", str(exc))
             return
         active_path = self.backend.working_dir or path
+        self._active_repo_path = active_path
+        self._refs_signature = None  # nouveau dépôt : forcer un rafraîchissement complet
         try:
             self.workspace_manager.touch_recent(active_path)
         except WorkspaceError as exc:
@@ -807,36 +828,51 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     def event(self, event) -> bool:
         # rafraîchissement auto quand la fenêtre reprend le focus (fichiers
-        # modifiés dans un éditeur externe, commits faits en ligne de commande…)
+        # modifiés dans un éditeur externe, commits faits en ligne de commande…).
+        # _is_busy est testé en premier : c'est un simple attribut, alors que
+        # toucher au backend pendant un pull/push attendrait la fin de celui-ci.
         if (
             event.type() == QEvent.WindowActivate
+            and not self._is_busy
             and self.backend.is_open
             and time.monotonic() - self._last_refresh > 1.0
         ):
-            self.refresh_all(show_errors=False)
+            self.refresh_all(show_errors=False, only_if_changed=True)
         return super().event(event)
 
-    def refresh_all(self, show_errors: bool = True) -> None:
+    def refresh_all(self, show_errors: bool = True, *, only_if_changed: bool = False) -> None:
         """Recharge branches, graphe et statut. Avec show_errors=False
         (rafraîchissement auto), les erreurs vont dans la barre de statut au
         lieu d'un dialogue — sinon fermer le dialogue redonnerait le focus à
-        la fenêtre et relancerait le rafraîchissement en boucle."""
+        la fenêtre et relancerait le rafraîchissement en boucle.
+
+        Avec only_if_changed=True, un seul `git for-each-ref` sert à détecter
+        si les références ont bougé ; sinon seul le statut (fichiers modifiés)
+        est relu, ce qui évite de reconstruire sidebar et graphe pour rien."""
         if not self.backend.is_open or self._is_busy:
             return
         try:
+            snapshot = self.backend.refs_snapshot()
+            current_branch = self.backend.current_branch
+            signature = (snapshot.signature(), current_branch)
+            if only_if_changed and signature == self._refs_signature:
+                self._refresh_status()
+                return
             self.sidebar.update_refs(
-                local=self.backend.local_branches(),
-                remote=self.backend.remote_branches(),
-                tags=self.backend.tags(),
-                current_branch=self.backend.current_branch,
+                local=snapshot.local,
+                remote=snapshot.remote,
+                tags=snapshot.tags,
+                current_branch=current_branch,
                 gitflow=self.gitflow.status(),
-                ahead_behind=self.backend.branch_ahead_behind(),
+                ahead_behind=snapshot.ahead_behind,
             )
-            commits = self.backend.commit_log()
+            commits = self.backend.commit_log(ref_map=snapshot.ref_map)
             self._commits_by_sha = {c.sha: c for c in commits}
             self.graph_panel.set_commits(commits)
             self._refresh_status()
+            self._refs_signature = signature
         except GitBackendError as exc:
+            self._refs_signature = None
             if show_errors:
                 QMessageBox.critical(self, "Erreur", str(exc))
             else:
@@ -844,7 +880,7 @@ class MainWindow(QMainWindow):
             return
         finally:
             self._last_refresh = time.monotonic()
-        self.statusBar().showMessage(f"Branche courante : {self.backend.current_branch}")
+        self.statusBar().showMessage(f"Branche courante : {current_branch}")
 
     def _refresh_status(self) -> None:
         staged, unstaged = self.backend.status()
@@ -854,14 +890,40 @@ class MainWindow(QMainWindow):
     # Fetch automatique
     # ------------------------------------------------------------------
     def _auto_fetch(self) -> None:
-        """Start a quiet background fetch when no other Git task is active."""
-        if not self.backend.is_open:
+        """Quiet background fetch. It runs as an independent git process on its
+        own thread and does not set the busy state, so the whole UI stays
+        usable while the network transfer is in progress."""
+        if not self.backend.is_open or self._is_busy:
             return
-        self._start_backend_operation(
-            self.backend.fetch,
-            label="Synchronisation automatique…",
-            silent=True,
-        )
+        if self._fetch_thread is not None:
+            # déjà en cours (ex. dépôt changé entre-temps) : on relancera après
+            self._fetch_rerun = True
+            return
+        self._fetch_repo_path = self._active_repo_path
+        self._fetch_thread = _OperationThread(self.backend.fetch_background, self)
+        self._fetch_thread.finished.connect(self._on_auto_fetch_finished)
+        self._fetch_thread.start()
+
+    def _on_auto_fetch_finished(self) -> None:
+        thread = self._fetch_thread
+        if thread is None:
+            return
+        error, result = thread.error, thread.result
+        same_repo = self._fetch_repo_path == self._active_repo_path
+        thread.deleteLater()
+        self._fetch_thread = None
+
+        if same_repo:
+            if error is not None:
+                self.statusBar().showMessage(f"Synchronisation échouée : {error}", 5000)
+            elif not self._is_busy:
+                self.refresh_all(show_errors=False, only_if_changed=True)
+                if isinstance(result, str) and result:
+                    self.statusBar().showMessage(f"Fetch auto : {result}", 5000)
+
+        if self._fetch_rerun or not same_repo:
+            self._fetch_rerun = False
+            self._auto_fetch()
 
     # ------------------------------------------------------------------
     # Actions Git
@@ -1035,9 +1097,10 @@ class MainWindow(QMainWindow):
         fn: Callable[[], Any],
         done_message: str | None = None,
         label: str = "Opération Git en cours…",
+        remote: bool = False,
     ) -> None:
         """Run a potentially slow Git operation outside the UI thread."""
-        self._start_backend_operation(fn, label=label, done_message=done_message)
+        self._start_backend_operation(fn, label=label, done_message=done_message, remote=remote)
 
     def _start_backend_operation(
         self,
@@ -1049,6 +1112,7 @@ class MainWindow(QMainWindow):
         on_success: Callable[[Any], None] | None = None,
         on_error: Callable[[str], None] | None = None,
         refresh_after: bool = True,
+        remote: bool = False,
     ) -> bool:
         if not self.backend.is_open:
             if not silent:
@@ -1057,6 +1121,12 @@ class MainWindow(QMainWindow):
         if self._is_busy:
             if not silent:
                 self.statusBar().showMessage("Une opération Git est déjà en cours.", 4000)
+            return False
+        if remote and self._fetch_thread is not None:
+            # deux opérations réseau simultanées se disputeraient les mêmes refs
+            self.statusBar().showMessage(
+                "Synchronisation automatique en cours, réessaie dans un instant.", 4000
+            )
             return False
 
         self._operation_label = label

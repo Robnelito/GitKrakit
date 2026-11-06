@@ -19,6 +19,7 @@ from gitkrakit.core import (
     CommitInfo,
     GitBackend,
     GitBackendError,
+    GitFlow,
     GraphLayout,
     parse_unified_diff,
     split_command,
@@ -337,6 +338,244 @@ class GitBackendTests(unittest.TestCase):
                 backend.close()
             repo.close()
             temporary.cleanup()
+
+
+def _init_repo(directory: str) -> Repo:
+    repo = Repo.init(directory)
+    with repo.config_writer() as config:
+        config.set_value("user", "name", "Test User")
+        config.set_value("user", "email", "test@example.test")
+    return repo
+
+
+def _commit_file(repo: Repo, name: str, content: str, message: str) -> None:
+    (Path(repo.working_tree_dir) / name).write_text(content, encoding="utf-8")
+    repo.git.add(name)
+    repo.git.commit("-m", message)
+
+
+class RefsSnapshotTests(unittest.TestCase):
+    def test_snapshot_reports_ahead_behind_tags_and_ref_chips(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            origin = Repo.init(Path(root) / "origin.git", bare=True)
+            work_dir = str(Path(root) / "work")
+            seed = _init_repo(str(Path(root) / "seed"))
+            _commit_file(seed, "a.txt", "1\n", "first")
+            seed.git.branch("-M", "main")
+            seed.git.remote("add", "origin", origin.git_dir)
+            seed.git.push("origin", "main")
+            clone = Repo.clone_from(origin.git_dir, work_dir, branch="main")
+            with clone.config_writer() as config:
+                config.set_value("user", "name", "Test User")
+                config.set_value("user", "email", "test@example.test")
+            backend = GitBackend(work_dir)
+            try:
+                self.assertEqual(backend.refs_snapshot().ahead_behind, {})
+
+                _commit_file(clone, "b.txt", "2\n", "local only")
+                clone.git.tag("-a", "v1", "-m", "release")
+                _commit_file(seed, "c.txt", "3\n", "remote only")
+                seed.git.push("origin", "main")
+                backend.fetch_background()
+
+                snapshot = backend.refs_snapshot()
+                self.assertEqual(snapshot.ahead_behind, {"main": (1, 1)})
+                self.assertIn("v1", snapshot.tags)
+                self.assertIn("origin/main", snapshot.remote)
+                # le tag annoté est rattaché au commit pointé, pas à l'objet tag
+                head_refs = snapshot.ref_map[clone.head.commit.hexsha]
+                self.assertIn("main", head_refs)
+                self.assertIn("tag:v1", head_refs)
+                self.assertEqual(snapshot.signature(), backend.refs_snapshot().signature())
+
+                log = backend.commit_log(ref_map=snapshot.ref_map)
+                self.assertEqual([c.message for c in log].count("local only"), 1)
+                self.assertEqual([c.message for c in log].count("remote only"), 1)
+            finally:
+                backend.close()
+                clone.close()
+                seed.close()
+                origin.close()
+
+    def test_signature_changes_when_a_ref_moves(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = _init_repo(directory)
+            backend = GitBackend(directory)
+            try:
+                _commit_file(repo, "a.txt", "1\n", "first")
+                before = backend.refs_snapshot().signature()
+                _commit_file(repo, "a.txt", "2\n", "second")
+                self.assertNotEqual(before, backend.refs_snapshot().signature())
+            finally:
+                backend.close()
+                repo.close()
+
+    def test_commit_log_on_empty_repository_is_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = _init_repo(directory)
+            backend = GitBackend(directory)
+            try:
+                self.assertEqual(backend.commit_log(), [])
+                self.assertEqual(backend.refs_snapshot().local, [])
+            finally:
+                backend.close()
+                repo.close()
+
+    def test_commit_log_keeps_unicode_and_parents(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = _init_repo(directory)
+            backend = GitBackend(directory)
+            try:
+                _commit_file(repo, "a.txt", "1\n", "premier : été")
+                _commit_file(repo, "a.txt", "2\n", "second")
+                log = backend.commit_log()
+                self.assertEqual([c.message for c in log], ["second", "premier : été"])
+                self.assertEqual(log[0].parents, [log[1].sha])
+                self.assertEqual(log[1].parents, [])
+                self.assertEqual(log[0].author, "Test User")
+            finally:
+                backend.close()
+                repo.close()
+
+
+class UntrackedDiffTests(unittest.TestCase):
+    def test_untracked_file_diff_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = _init_repo(directory)
+            backend = GitBackend(directory)
+            try:
+                _commit_file(repo, "a.txt", "1\n", "first")
+                (Path(directory) / "new.py").write_text("x = 1\ny = 2\n", encoding="utf-8")
+                rows = parse_unified_diff(backend.diff_for_file("new.py"))
+                self.assertEqual([r.kind for r in rows], ["hunk", "add", "add"])
+                self.assertEqual(rows[2].new_text, "y = 2")
+            finally:
+                backend.close()
+                repo.close()
+
+    def test_untracked_binary_and_empty_files(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = _init_repo(directory)
+            backend = GitBackend(directory)
+            try:
+                _commit_file(repo, "a.txt", "1\n", "first")
+                (Path(directory) / "blob.bin").write_bytes(b"\x00\x01\x02")
+                (Path(directory) / "empty.txt").write_text("", encoding="utf-8")
+                self.assertIn("Binary files", backend.diff_for_file("blob.bin"))
+                self.assertEqual(backend.diff_for_file("empty.txt"), "")
+            finally:
+                backend.close()
+                repo.close()
+
+
+class GitFlowConfigTests(unittest.TestCase):
+    def test_status_reads_configuration_and_branches(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = _init_repo(directory)
+            backend = GitBackend(directory)
+            try:
+                _commit_file(repo, "a.txt", "1\n", "first")
+                repo.git.branch("-M", "main")
+                flow = GitFlow(backend)
+                self.assertIsNone(flow.status())
+                self.assertFalse(flow.is_initialized())
+
+                flow.init("main", "develop")
+                flow.feature_start("login")
+                status = flow.status()
+                self.assertTrue(flow.is_initialized())
+                self.assertEqual((status.config.main, status.config.develop), ("main", "develop"))
+                self.assertEqual(status.config.feature_prefix, "feature/")
+                self.assertEqual(status.features, ["login"])
+            finally:
+                backend.close()
+                repo.close()
+
+
+class DiffPanelTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_large_diff_is_modelled_without_per_row_widgets(self) -> None:
+        from gitkrakit.ui.panels.diff_panel import DiffPanel
+
+        panel = DiffPanel()
+        body = "\n".join(f"-old {i}\n+new {i}" for i in range(2000))
+        panel.show_diff("big", f"@@ -1,2000 +1,2000 @@\n{body}", "a.py")
+        self.assertEqual(panel.model.rowCount(), 2001)  # 1 hunk + 2000 lignes remplacées
+        self.assertEqual(panel.summary_label.text(), "+2000  −2000")
+        self.assertIsNone(panel.table.indexWidget(panel.model.index(5, 1)))
+        self.assertIn("old 0", panel.model.index(1, 1).data())
+        panel.apply_theme()  # ne doit ni lever ni vider le diff
+        self.assertEqual(panel.model.rowCount(), 2001)
+
+    def test_empty_and_binary_diffs_show_a_message(self) -> None:
+        from gitkrakit.ui.panels.diff_panel import DiffPanel
+
+        panel = DiffPanel()
+        panel.show_diff("x", "", "a.py")
+        self.assertEqual(panel.model.index(0, 0).data(), "(aucune différence)")
+        panel.show_diff("x", "Binary files /dev/null and b/a.bin differ", "a.bin")
+        self.assertEqual(panel.model.index(0, 0).data(), "(fichier binaire)")
+
+
+class GraphViewRedrawTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = QApplication.instance() or QApplication([])
+
+    @staticmethod
+    def _commits(count: int) -> list[CommitInfo]:
+        return [
+            CommitInfo(
+                f"{i:040x}", f"{i:07x}", f"commit {i}", "Ada", "ada@example.test",
+                datetime.now(), [f"{i + 1:040x}"] if i < count - 1 else [],
+            )
+            for i in range(count)
+        ]
+
+    @staticmethod
+    def _count_redraws(view) -> list[int]:
+        calls: list[int] = []
+        original = view._redraw_scene
+
+        def counted() -> None:
+            calls.append(1)
+            original()
+
+        view._redraw_scene = counted
+        return calls
+
+    def test_unchanged_commits_do_not_rebuild_the_scene(self) -> None:
+        from gitkrakit.ui.graph_view import GraphPanel
+
+        panel = GraphPanel()
+        panel.resize(1000, 600)
+        redraws = self._count_redraws(panel.view)
+
+        panel.set_commits(self._commits(20))
+        settled = len(redraws)
+        self.assertGreaterEqual(settled, 1)
+        panel.set_commits(self._commits(20))  # mêmes shas/refs
+        self.assertEqual(len(redraws), settled)
+
+        changed = self._commits(20)
+        changed[0].refs.append("main")
+        panel.set_commits(changed)
+        self.assertGreater(len(redraws), settled)
+
+    def test_setting_identical_column_widths_does_not_redraw(self) -> None:
+        from gitkrakit.ui.graph_view import GraphPanel
+
+        panel = GraphPanel()
+        panel.set_commits(self._commits(5))
+        view = panel.view
+        calls = self._count_redraws(view)
+        view.set_column_widths(ref=view.col_ref, graph=view.col_graph, msg=view.col_msg)
+        self.assertEqual(calls, [])
+        view.set_column_widths(msg=view.col_msg + 10)
+        self.assertEqual(len(calls), 1)
 
 
 if __name__ == "__main__":

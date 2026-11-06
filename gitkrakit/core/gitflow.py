@@ -55,26 +55,45 @@ class GitFlow:
         except git.GitCommandError:
             return None
 
-    def is_initialized(self) -> bool:
-        return self._get_config("gitflow.branch.master") is not None
+    def _read_config(self) -> dict[str, str]:
+        """Toutes les clés `gitflow.*` en UN seul processus git (au lieu d'un
+        `git config --get` par clé, relancé à chaque rafraîchissement)."""
+        try:
+            output = self._repo.git.config("--get-regexp", r"^gitflow\.")
+        except git.GitCommandError:  # code 1 : aucune clé gitflow.*
+            return {}
+        values: dict[str, str] = {}
+        for line in output.splitlines():
+            key, _, value = line.partition(" ")
+            if key:
+                values[key.lower()] = value.strip()
+        return values
 
-    def config(self) -> GitFlowConfig | None:
-        if not self.is_initialized():
+    @staticmethod
+    def _config_from(values: dict[str, str]) -> GitFlowConfig | None:
+        if "gitflow.branch.master" not in values:
             return None
         return GitFlowConfig(
-            main=self._get_config("gitflow.branch.master") or "main",
-            develop=self._get_config("gitflow.branch.develop") or "develop",
-            feature_prefix=self._get_config("gitflow.prefix.feature") or "feature/",
-            release_prefix=self._get_config("gitflow.prefix.release") or "release/",
-            hotfix_prefix=self._get_config("gitflow.prefix.hotfix") or "hotfix/",
+            main=values.get("gitflow.branch.master") or "main",
+            develop=values.get("gitflow.branch.develop") or "develop",
+            feature_prefix=values.get("gitflow.prefix.feature") or "feature/",
+            release_prefix=values.get("gitflow.prefix.release") or "release/",
+            hotfix_prefix=values.get("gitflow.prefix.hotfix") or "hotfix/",
         )
+
+    def is_initialized(self) -> bool:
+        return "gitflow.branch.master" in self._read_config()
+
+    def config(self) -> GitFlowConfig | None:
+        return self._config_from(self._read_config())
 
     def status(self) -> GitFlowStatus | None:
         """None si le dépôt n'est pas ouvert ou Git Flow pas initialisé."""
-        if not self._backend.is_open or not self.is_initialized():
+        if not self._backend.is_open:
             return None
         cfg = self.config()
-        assert cfg is not None
+        if cfg is None:
+            return None
         locals_ = self._backend.local_branches()
 
         def short_names(prefix: str) -> list[str]:

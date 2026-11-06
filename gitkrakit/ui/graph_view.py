@@ -71,6 +71,7 @@ MIN_REF_COL_WIDTH = 70
 MIN_GRAPH_COL_WIDTH = 50
 MIN_MSG_COL_WIDTH = 150
 
+RESIZE_DEBOUNCE_MS = 40  # regroupe les événements d'un redimensionnement continu
 HANDLE_WIDTH = 5  # cible confortable ; seule une ligne centrale reste visible
 SCROLLBAR_RESERVE = 10
 CHIP_PADDING = 6
@@ -178,6 +179,7 @@ class GraphView(QGraphicsView):
         self.setBackgroundBrush(QBrush(QColor(theme.BACKGROUND)))
 
         self._graph_layout: GraphLayout | None = None
+        self._commits_signature: tuple | None = None
         self._rows: dict[str, CommitRowItem] = {}
         self._content_width = 0.0
         self.selected_sha: str | None = None
@@ -207,6 +209,7 @@ class GraphView(QGraphicsView):
         l'en-tête) et redessine. `graph` marque la colonne graphe comme
         fixée par l'utilisateur (elle n'est plus recalculée automatiquement
         selon le nombre de lanes)."""
+        before = (self.col_ref, self.col_graph, self.col_msg)
         if ref is not None:
             self.col_ref = ref
         if graph is not None:
@@ -215,9 +218,16 @@ class GraphView(QGraphicsView):
                 self.graph_auto_size = False
         if msg is not None:
             self.col_msg = msg
-        self._redraw()
+        if (self.col_ref, self.col_graph, self.col_msg) != before:
+            self._redraw()
 
     def set_commits(self, commits) -> None:
+        # Rien n'a bougé (retour de focus, fetch sans nouveauté) : on évite de
+        # reconstruire toute la scène.
+        signature = tuple((c.sha, tuple(c.refs)) for c in commits)
+        if signature == self._commits_signature and self._graph_layout is not None:
+            return
+        self._commits_signature = signature
         # préserver la position de défilement (rafraîchissement auto)
         v_scroll = self.verticalScrollBar().value()
         h_scroll = self.horizontalScrollBar().value()
@@ -273,6 +283,13 @@ class GraphView(QGraphicsView):
 
     # ------------------------------------------------------------------
     def _redraw(self) -> None:
+        self.setUpdatesEnabled(False)
+        try:
+            self._redraw_scene()
+        finally:
+            self.setUpdatesEnabled(True)
+
+    def _redraw_scene(self) -> None:
         self._scene.clear()
         self._rows.clear()
         if not self._graph_layout:
@@ -600,7 +617,7 @@ class GraphPanel(QWidget):
 
         self._column_sync_timer = QTimer(self)
         self._column_sync_timer.setSingleShot(True)
-        self._column_sync_timer.setInterval(0)
+        self._column_sync_timer.setInterval(RESIZE_DEBOUNCE_MS)
         self._column_sync_timer.timeout.connect(self._sync_view_columns)
 
     def apply_theme(self) -> None:

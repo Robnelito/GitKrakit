@@ -6,6 +6,10 @@ graphe n'appellent jamais GitPython directement.
 """
 from __future__ import annotations
 
+import os
+import re
+import subprocess
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import wraps
@@ -36,8 +40,33 @@ class FileStatus:
     status: str  # "modified", "added", "deleted", "untracked", "renamed"
 
 
+@dataclass
+class RefsSnapshot:
+    """Branches, tags et état de synchronisation lus en une seule commande."""
+    local: list[str] = field(default_factory=list)
+    remote: list[str] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
+    ahead_behind: dict[str, tuple[int, int]] = field(default_factory=dict)
+    ref_map: dict[str, list[str]] = field(default_factory=dict)  # sha -> refs
+
+    def signature(self) -> tuple:
+        """Empreinte comparable : change dès qu'une ref bouge ou apparaît."""
+        return (
+            tuple(self.local),
+            tuple(self.remote),
+            tuple(self.tags),
+            tuple(sorted(self.ahead_behind.items())),
+            tuple(sorted((sha, tuple(refs)) for sha, refs in self.ref_map.items())),
+        )
+
+
 class GitBackendError(Exception):
     """Erreur remontée par le backend, à afficher telle quelle dans l'UI."""
+
+
+_AHEAD_RE = re.compile(r"ahead (\d+)")
+_BEHIND_RE = re.compile(r"behind (\d+)")
+BACKGROUND_FETCH_TIMEOUT = 300  # secondes
 
 
 def _synchronized(method):
@@ -63,6 +92,7 @@ class GitBackend:
 
     def __init__(self, repo_path: Optional[str] = None):
         self._lock = RLock()
+        self._background_process: Optional[subprocess.Popen] = None
         self.repo: Optional[Repo] = None
         if repo_path:
             self.open(repo_path)
@@ -89,8 +119,9 @@ class GitBackend:
             self.repo = None
 
     @property
-    @_synchronized
     def is_open(self) -> bool:
+        # Lecture d'une simple référence : volontairement sans verrou, pour que
+        # le thread UI ne se bloque jamais derrière un pull/push en cours.
         return self.repo is not None
 
     @property
@@ -138,25 +169,87 @@ class GitBackend:
         return [t.name for t in self.repo.tags]
 
     @_synchronized
-    def branch_ahead_behind(self) -> dict[str, tuple[int, int]]:
-        """Pour chaque branche locale ayant une branche amont (tracking),
-        retourne {nom: (ahead, behind)} par rapport à cette branche amont.
+    def refs_snapshot(self) -> RefsSnapshot:
+        """Lit branches, tags, refs par commit et ahead/behind en UN seul
+        processus `git for-each-ref` (au lieu de deux `rev-list` par branche).
+
         Ne déclenche aucun accès réseau : compare l'état local au dernier
         `fetch` connu (refs/remotes/...), d'où l'intérêt du fetch auto."""
         self._require_repo()
-        result: dict[str, tuple[int, int]] = {}
-        for head in self.repo.heads:
+        fmt = "%(refname)%00%(objectname)%00%(*objectname)%00%(upstream:track)"
+        try:
+            output = self.repo.git.for_each_ref(
+                f"--format={fmt}", "refs/heads", "refs/remotes", "refs/tags"
+            )
+        except git.GitCommandError as exc:
+            raise GitBackendError(f"Impossible de lire les références: {exc}") from exc
+
+        snap = RefsSnapshot()
+        heads: dict[str, list[str]] = {}
+        tags: dict[str, list[str]] = {}
+        remotes: dict[str, list[str]] = {}
+        for line in output.splitlines():
+            fields = line.split("\x00")
+            if len(fields) < 4:
+                continue
+            refname, sha, peeled, track = fields[:4]
+            target = peeled or sha  # tag annoté : le commit pointé, pas le tag
+            if refname.startswith("refs/heads/"):
+                name = refname[len("refs/heads/"):]
+                snap.local.append(name)
+                heads.setdefault(sha, []).append(name)
+                if track:
+                    counts = self._parse_track(track)
+                    if counts is None:  # format inattendu : repli sûr, branche par branche
+                        counts = self._ahead_behind_slow(name)
+                    if counts and any(counts):
+                        snap.ahead_behind[name] = counts
+            elif refname.startswith("refs/remotes/"):
+                name = refname[len("refs/remotes/"):]
+                snap.remote.append(name)
+                remotes.setdefault(sha, []).append(name)
+            elif refname.startswith("refs/tags/"):
+                name = refname[len("refs/tags/"):]
+                snap.tags.append(name)
+                tags.setdefault(target, []).append(f"tag:{name}")
+
+        for group in (heads, tags, remotes):  # ordre d'affichage historique
+            for sha, names in group.items():
+                snap.ref_map.setdefault(sha, []).extend(names)
+        return snap
+
+    @staticmethod
+    def _parse_track(track: str) -> Optional[tuple[int, int]]:
+        """`[ahead 2, behind 1]` -> (2, 1). None si le format n'est pas reconnu ;
+        (0, 0) pour un amont disparu (`[gone]`)."""
+        if "gone" in track:
+            return (0, 0)
+        ahead = _AHEAD_RE.search(track)
+        behind = _BEHIND_RE.search(track)
+        if ahead is None and behind is None:
+            return None
+        return (
+            int(ahead.group(1)) if ahead else 0,
+            int(behind.group(1)) if behind else 0,
+        )
+
+    def _ahead_behind_slow(self, branch: str) -> Optional[tuple[int, int]]:
+        try:
+            head = self.repo.heads[branch]
             tracking = head.tracking_branch()
             if tracking is None:
-                continue
-            try:
-                ahead = int(self.repo.git.rev_list("--count", f"{tracking.name}..{head.name}"))
-                behind = int(self.repo.git.rev_list("--count", f"{head.name}..{tracking.name}"))
-            except git.GitCommandError:
-                continue
-            if ahead or behind:
-                result[head.name] = (ahead, behind)
-        return result
+                return None
+            ahead = int(self.repo.git.rev_list("--count", f"{tracking.name}..{head.name}"))
+            behind = int(self.repo.git.rev_list("--count", f"{head.name}..{tracking.name}"))
+            return (ahead, behind)
+        except (git.GitCommandError, IndexError, ValueError):
+            return None
+
+    @_synchronized
+    def branch_ahead_behind(self) -> dict[str, tuple[int, int]]:
+        """Pour chaque branche locale ayant une branche amont (tracking),
+        retourne {nom: (ahead, behind)} par rapport à cette branche amont."""
+        return self.refs_snapshot().ahead_behind
 
     @_synchronized
     def create_branch(self, name: str, start_point: Optional[str] = None) -> None:
@@ -224,44 +317,48 @@ class GitBackend:
     # Historique (pour le graphe)
     # ------------------------------------------------------------------
     @_synchronized
-    def commit_log(self, max_count: int = 300) -> list[CommitInfo]:
+    def commit_log(
+        self,
+        max_count: int = 300,
+        ref_map: Optional[dict[str, list[str]]] = None,
+    ) -> list[CommitInfo]:
         """Retourne les commits en ordre topologique (parent après enfant),
-        avec les refs (branches/tags) qui pointent dessus."""
+        avec les refs (branches/tags) qui pointent dessus.
+
+        Un seul processus `git log` pour tout l'historique affiché ; `ref_map`
+        permet de réutiliser un `refs_snapshot()` déjà lu."""
         self._require_repo()
+        if ref_map is None:
+            ref_map = self.refs_snapshot().ref_map
 
-        # index sha -> liste de noms de refs pointant dessus
-        ref_map: dict[str, list[str]] = {}
-        for h in self.repo.heads:
-            ref_map.setdefault(h.commit.hexsha, []).append(h.name)
-        for t in self.repo.tags:
-            ref_map.setdefault(t.commit.hexsha, []).append(f"tag:{t.name}")
-        for remote in self.repo.remotes:
-            try:
-                for ref in remote.refs:
-                    ref_map.setdefault(ref.commit.hexsha, []).append(ref.name)
-            except Exception:
-                continue
-
-        commits: list[CommitInfo] = []
+        fmt = "%H%x00%P%x00%an%x00%ae%x00%ct%x00%s%x1e"
         try:
-            iter_commits = self.repo.iter_commits(
-                "--all", max_count=max_count, topo_order=True
+            output = self.repo.git.log(
+                "--all", "--topo-order", f"--max-count={max_count}", f"--format={fmt}"
             )
         except git.GitCommandError:
             # dépôt sans commit
-            return commits
+            return []
 
-        for c in iter_commits:
+        commits: list[CommitInfo] = []
+        for record in output.split("\x1e"):
+            record = record.strip("\n")
+            if not record:
+                continue
+            fields = record.split("\x00")
+            if len(fields) < 6:
+                continue
+            sha, parents, author, email, timestamp, subject = fields[:6]
             commits.append(
                 CommitInfo(
-                    sha=c.hexsha,
-                    short_sha=c.hexsha[:7],
-                    message=c.message.strip().split("\n")[0],
-                    author=c.author.name,
-                    author_email=c.author.email,
-                    date=datetime.fromtimestamp(c.committed_date),
-                    parents=[p.hexsha for p in c.parents],
-                    refs=ref_map.get(c.hexsha, []),
+                    sha=sha,
+                    short_sha=sha[:7],
+                    message=subject.strip(),
+                    author=author,
+                    author_email=email,
+                    date=datetime.fromtimestamp(int(timestamp)),
+                    parents=parents.split(),
+                    refs=ref_map.get(sha, []),
                 )
             )
         return commits
@@ -385,15 +482,28 @@ class GitBackend:
             return diff
 
         # fichier non suivi : git diff ne montre rien, on synthétise un
-        # pseudo-diff avec tout le contenu en ajout
+        # vrai diff unifié (avec en-tête de hunk, sans quoi il serait ignoré)
+        # où tout le contenu est en ajout
         full_path = Path(self.working_dir) / path
-        if not staged and path in self.repo.untracked_files and full_path.is_file():
-            try:
-                lines = full_path.read_text(encoding="utf-8", errors="replace").splitlines()
-            except OSError:
-                return ""
-            return f"--- /dev/null\n+++ b/{path}\n" + "\n".join(f"+{l}" for l in lines)
-        return diff
+        if staged or not full_path.is_file():
+            return diff
+        try:
+            untracked = self.repo.git.ls_files("--others", "--exclude-standard", "--", path)
+        except git.GitCommandError:
+            return diff
+        if not untracked.strip():
+            return diff
+        try:
+            raw = full_path.read_bytes()
+        except OSError:
+            return ""
+        if b"\x00" in raw[:8192]:
+            return f"Binary files /dev/null and b/{path} differ"
+        lines = raw.decode("utf-8", errors="replace").splitlines()
+        if not lines:
+            return ""
+        body = "\n".join(f"+{line}" for line in lines)
+        return f"--- /dev/null\n+++ b/{path}\n@@ -0,0 +1,{len(lines)} @@\n{body}"
 
     @_synchronized
     def diff_for_commit_file(self, sha: str, path: str) -> str:
@@ -435,6 +545,54 @@ class GitBackend:
             return f"Fetch OK ({len(infos)} ref(s) mise(s) à jour)"
         except Exception as exc:
             raise GitBackendError(f"Échec du fetch: {exc}") from exc
+
+    def fetch_background(self, remote_name: str = "origin") -> str:
+        """Fetch lancé comme processus `git` indépendant, SANS tenir le verrou
+        du dépôt : le reste de l'application reste utilisable pendant le
+        transfert réseau (le fetch via GitPython sérialiserait toute l'UI)."""
+        with self._lock:
+            self._require_repo()
+            try:
+                self.repo.remote(remote_name)
+            except ValueError as exc:
+                raise GitBackendError(f"Remote introuvable : '{remote_name}'.") from exc
+            cwd = self.repo.working_tree_dir or self.repo.git_dir
+
+        env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C"}
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
+        executable = getattr(git.Git, "GIT_PYTHON_GIT_EXECUTABLE", None) or "git"
+        try:
+            process = subprocess.Popen(
+                [executable, "fetch", remote_name],
+                cwd=cwd,
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                creationflags=flags,
+            )
+        except OSError as exc:
+            raise GitBackendError(f"Échec du fetch: {exc}") from exc
+        self._background_process = process
+        try:
+            _out, err = process.communicate(timeout=BACKGROUND_FETCH_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.communicate()
+            raise GitBackendError("Échec du fetch: délai dépassé.") from None
+        finally:
+            self._background_process = None
+        text = err.decode("utf-8", errors="replace")
+        if process.returncode != 0:
+            raise GitBackendError(f"Échec du fetch: {text.strip() or process.returncode}")
+        updated = sum(1 for line in text.splitlines() if "->" in line)
+        return f"Fetch OK ({updated} ref(s) mise(s) à jour)"
+
+    def cancel_background_fetch(self) -> None:
+        """Interrompt le fetch en arrière-plan (fermeture de l'application)."""
+        process = self._background_process
+        if process is not None and process.poll() is None:
+            process.terminate()
 
     @_synchronized
     def pull(self, remote_name: str = "origin") -> str:
