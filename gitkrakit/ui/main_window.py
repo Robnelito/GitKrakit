@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import Qt, QEvent, QSize, QThread, QTimer
-from PySide6.QtGui import QAction, QActionGroup, QValidator
+from PySide6.QtGui import QAction, QActionGroup
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -61,24 +61,26 @@ from gitkrakit.workspace import WorkspaceError, WorkspaceManager
 AUTO_FETCH_INTERVAL_MS = 5 * 60 * 1000  # 5 minutes
 
 
-class _SpaceToDashValidator(QValidator):
-    """Remplace les espaces par des '-' pendant la saisie (frappe ou collage)."""
-
-    def validate(self, text: str, pos: int):
-        return QValidator.Acceptable, text.replace(" ", "-"), pos
-
-
 def _ask_ref_name(parent: QWidget, title: str, label: str) -> tuple[str, bool]:
     """Équivalent de QInputDialog.getText pour un nom de branche/version :
-    les espaces saisis sont traduits en '-'."""
+    les espaces saisis (frappe ou collage) sont traduits en '-'."""
     dialog = QInputDialog(parent)
+    dialog.setInputMode(QInputDialog.TextInput)  # force la création du QLineEdit
     dialog.setWindowTitle(title)
     dialog.setLabelText(label)
     edit = dialog.findChild(QLineEdit)
     if edit is not None:
-        edit.setValidator(_SpaceToDashValidator(edit))
+
+        def _dash_spaces(text: str) -> None:
+            if " " not in text:
+                return
+            pos = edit.cursorPosition()
+            edit.setText(text.replace(" ", "-"))
+            edit.setCursorPosition(pos)
+
+        edit.textChanged.connect(_dash_spaces)
     ok = dialog.exec() == QDialog.Accepted
-    return dialog.textValue(), ok
+    return dialog.textValue().replace(" ", "-"), ok
 
 
 class _OperationThread(QThread):
