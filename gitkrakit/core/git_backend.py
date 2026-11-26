@@ -41,6 +41,15 @@ class FileStatus:
 
 
 @dataclass
+class UnpushedInfo:
+    """Commits de la branche courante que le prochain push enverra."""
+    count: int
+    head_sha: str
+    upstream: Optional[str]  # None : branche pas encore publiée
+    base: str  # commit (ou arbre vide) servant de référence pour lister les fichiers
+
+
+@dataclass
 class RefsSnapshot:
     """Branches, tags et état de synchronisation lus en une seule commande."""
     local: list[str] = field(default_factory=list)
@@ -67,6 +76,7 @@ class GitBackendError(Exception):
 _AHEAD_RE = re.compile(r"ahead (\d+)")
 _BEHIND_RE = re.compile(r"behind (\d+)")
 BACKGROUND_FETCH_TIMEOUT = 300  # secondes
+EMPTY_TREE_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
 
 def _synchronized(method):
@@ -441,6 +451,10 @@ class GitBackend:
         except git.GitCommandError as exc:
             raise GitBackendError(f"Impossible de lire le commit {sha[:7]}: {exc}") from exc
 
+        return self._parse_name_status(output)
+
+    @classmethod
+    def _parse_name_status(cls, output: str) -> list[FileStatus]:
         files: list[FileStatus] = []
         for line in output.splitlines():
             if not line.strip():
@@ -448,8 +462,82 @@ class GitBackend:
             parts = line.split("\t")
             code = parts[0][:1]  # "R100" -> "R"
             path = parts[-1]
-            files.append(FileStatus(path=path, status=self._STATUS_LABELS.get(code, code)))
+            files.append(FileStatus(path=path, status=cls._STATUS_LABELS.get(code, code)))
         return files
+
+    # ------------------------------------------------------------------
+    # Commits à pousser
+    # ------------------------------------------------------------------
+    @_synchronized
+    def unpushed_info(self) -> Optional[UnpushedInfo]:
+        """Commits de la branche courante absents de son amont (ou, sans amont,
+        de tous les remotes). None s'il n'y a rien à pousser. Aucun accès réseau."""
+        self._require_repo()
+        if not self.repo.remotes:
+            return None
+        try:
+            branch = self.repo.active_branch
+            head_sha = branch.commit.hexsha
+        except (TypeError, ValueError):  # HEAD détaché ou dépôt sans commit
+            return None
+
+        upstream_name: Optional[str] = None
+        exclude = ["--remotes"]
+        try:
+            tracking = branch.tracking_branch()
+            if tracking is not None and tracking.is_valid():
+                upstream_name = tracking.name
+                exclude = [tracking.path]
+        except Exception:
+            pass
+
+        try:
+            output = self.repo.git.rev_list("--boundary", head_sha, "--not", *exclude)
+        except git.GitCommandError:
+            return None
+
+        count = 0
+        boundaries: list[str] = []
+        for line in output.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith("-"):
+                boundaries.append(line[1:])
+            else:
+                count += 1
+        if count == 0:
+            return None
+
+        if not boundaries:
+            base = EMPTY_TREE_SHA
+        elif len(boundaries) == 1:
+            base = boundaries[0]
+        else:
+            try:
+                base = self.repo.git.merge_base("--octopus", *boundaries).strip() or boundaries[0]
+            except git.GitCommandError:
+                base = boundaries[0]
+        return UnpushedInfo(count=count, head_sha=head_sha, upstream=upstream_name, base=base)
+
+    @_synchronized
+    def unpushed_files(self, info: UnpushedInfo) -> list[FileStatus]:
+        """Fichiers que le prochain push enverra (somme des commits non poussés)."""
+        self._require_repo()
+        try:
+            output = self.repo.git.diff("--name-status", info.base, info.head_sha)
+        except git.GitCommandError as exc:
+            raise GitBackendError(f"Impossible de lister les fichiers à pousser: {exc}") from exc
+        return self._parse_name_status(output)
+
+    @_synchronized
+    def diff_for_unpushed_file(self, info: UnpushedInfo, path: str) -> str:
+        """Diff cumulé d'un fichier sur l'ensemble des commits à pousser."""
+        self._require_repo()
+        try:
+            return self.repo.git.diff(info.base, info.head_sha, "--", path)
+        except git.GitCommandError as exc:
+            raise GitBackendError(f"Diff indisponible pour {path}: {exc}") from exc
 
     @_synchronized
     def stash(self) -> str:
@@ -604,12 +692,25 @@ class GitBackend:
         except Exception as exc:
             raise GitBackendError(f"Échec du pull: {exc}") from exc
 
+    def _needs_upstream(self) -> bool:
+        """Vrai si la branche courante n'a pas (ou plus) de branche amont."""
+        try:
+            tracking = self.repo.active_branch.tracking_branch()
+        except (TypeError, ValueError):  # HEAD détaché
+            return False
+        return tracking is None
+
     @_synchronized
     def push(self, remote_name: str = "origin") -> str:
         self._require_repo()
         try:
             remote = self.repo.remote(remote_name)
-            infos = remote.push()
+            if self._needs_upstream():
+                # branche jamais publiée : on la crée sur le remote et on lie l'amont
+                branch = self.repo.active_branch.name
+                infos = remote.push(refspec=f"{branch}:{branch}", set_upstream=True)
+            else:
+                infos = remote.push()
             error_flags = (
                 PushInfo.ERROR
                 | PushInfo.REJECTED

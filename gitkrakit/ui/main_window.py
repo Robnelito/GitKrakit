@@ -41,7 +41,14 @@ from PySide6.QtWidgets import (
 )
 
 from gitkrakit import __version__, preferences, theme
-from gitkrakit.core import CommitInfo, GitBackend, GitBackendError, GitFlow
+from gitkrakit.core import (
+    PENDING_PUSH_SHA,
+    CommitInfo,
+    GitBackend,
+    GitBackendError,
+    GitFlow,
+    UnpushedInfo,
+)
 from gitkrakit.core.acp_commit import ACP_PROVIDERS
 from gitkrakit.core.acp_commit import generate_commit_message as generate_acp_commit_message
 from gitkrakit.ui import icons
@@ -125,6 +132,7 @@ class MainWindow(QMainWindow):
         self.gitflow = GitFlow(self.backend)
         self.workspace_manager = WorkspaceManager()
         self._commits_by_sha: dict[str, CommitInfo] = {}
+        self._unpushed: UnpushedInfo | None = None
         self._last_refresh = 0.0
         self._theme_mode = theme.saved_theme_mode()
         app = QApplication.instance()
@@ -870,7 +878,8 @@ class MainWindow(QMainWindow):
             )
             commits = self.backend.commit_log(ref_map=snapshot.ref_map)
             self._commits_by_sha = {c.sha: c for c in commits}
-            self.graph_panel.set_commits(commits)
+            self._unpushed = self.backend.unpushed_info()
+            self.graph_panel.set_commits(commits, self._unpushed)
             self._refresh_status()
             self._refs_signature = signature
         except GitBackendError as exc:
@@ -1208,6 +1217,9 @@ class MainWindow(QMainWindow):
     def show_commit_details(self, sha: str) -> None:
         if self._is_busy:
             return
+        if sha == PENDING_PUSH_SHA:
+            self._show_unpushed_details()
+            return
         commit = self._commits_by_sha.get(sha)
         if commit is None:
             return
@@ -1216,6 +1228,17 @@ class MainWindow(QMainWindow):
         except GitBackendError:
             files = []
         self.details_panel.show_commit(commit, files)
+        self._right_panel.setCurrentWidget(self.details_panel)
+
+    def _show_unpushed_details(self) -> None:
+        info = self._unpushed
+        if info is None:
+            return
+        try:
+            files = self.backend.unpushed_files(info)
+        except GitBackendError:
+            files = []
+        self.details_panel.show_unpushed(info, files)
         self._right_panel.setCurrentWidget(self.details_panel)
 
     # ------------------------------------------------------------------
@@ -1320,10 +1343,18 @@ class MainWindow(QMainWindow):
         if self._is_busy:
             return
         try:
-            diff = self.backend.diff_for_commit_file(sha, path)
+            if sha == PENDING_PUSH_SHA:
+                if self._unpushed is None:
+                    return
+                diff = self.backend.diff_for_unpushed_file(self._unpushed, path)
+                origin = "à pousser"
+            else:
+                diff = self.backend.diff_for_commit_file(sha, path)
+                origin = f"commit {sha[:7]}"
         except GitBackendError as exc:
             diff = str(exc)
-        self.diff_panel.show_diff(f"{path}  (commit {sha[:7]})", diff, file_path=path)
+            origin = "à pousser" if sha == PENDING_PUSH_SHA else f"commit {sha[:7]}"
+        self.diff_panel.show_diff(f"{path}  ({origin})", diff, file_path=path)
         self.center_stack.setCurrentWidget(self.diff_page)
 
     def _run_terminal_command(self, args: list[str]) -> None:
