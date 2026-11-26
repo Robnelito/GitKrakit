@@ -429,7 +429,8 @@ class RefsSnapshotTests(unittest.TestCase):
                 clone.git.checkout("-b", "feature")
                 self.assertIsNone(backend.unpushed_info().upstream)
                 self.assertEqual(backend.unpushed_info().count, 2)
-                clone.git.push("origin", "feature")
+                backend.push()  # crée l'amont automatiquement
+                self.assertEqual(clone.active_branch.tracking_branch().name, "origin/feature")
                 self.assertIsNone(backend.unpushed_info())
             finally:
                 backend.close()

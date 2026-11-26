@@ -692,12 +692,25 @@ class GitBackend:
         except Exception as exc:
             raise GitBackendError(f"Échec du pull: {exc}") from exc
 
+    def _needs_upstream(self) -> bool:
+        """Vrai si la branche courante n'a pas (ou plus) de branche amont."""
+        try:
+            tracking = self.repo.active_branch.tracking_branch()
+        except (TypeError, ValueError):  # HEAD détaché
+            return False
+        return tracking is None
+
     @_synchronized
     def push(self, remote_name: str = "origin") -> str:
         self._require_repo()
         try:
             remote = self.repo.remote(remote_name)
-            infos = remote.push()
+            if self._needs_upstream():
+                # branche jamais publiée : on la crée sur le remote et on lie l'amont
+                branch = self.repo.active_branch.name
+                infos = remote.push(refspec=f"{branch}:{branch}", set_upstream=True)
+            else:
+                infos = remote.push()
             error_flags = (
                 PushInfo.ERROR
                 | PushInfo.REJECTED
