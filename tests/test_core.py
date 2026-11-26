@@ -397,6 +397,57 @@ class RefsSnapshotTests(unittest.TestCase):
                 seed.close()
                 origin.close()
 
+    def test_unpushed_info_and_files_with_and_without_upstream(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            origin = Repo.init(Path(root) / "origin.git", bare=True)
+            work_dir = str(Path(root) / "work")
+            seed = _init_repo(str(Path(root) / "seed"))
+            _commit_file(seed, "a.txt", "1\n", "first")
+            seed.git.branch("-M", "main")
+            seed.git.remote("add", "origin", origin.git_dir)
+            seed.git.push("origin", "main")
+            clone = Repo.clone_from(origin.git_dir, work_dir, branch="main")
+            with clone.config_writer() as config:
+                config.set_value("user", "name", "Test User")
+                config.set_value("user", "email", "test@example.test")
+            backend = GitBackend(work_dir)
+            try:
+                self.assertIsNone(backend.unpushed_info())
+
+                _commit_file(clone, "b.txt", "2\n", "second")
+                _commit_file(clone, "a.txt", "changed\n", "third")
+                info = backend.unpushed_info()
+                self.assertIsNotNone(info)
+                self.assertEqual(info.count, 2)
+                self.assertEqual(info.upstream, "origin/main")
+                self.assertEqual(info.head_sha, clone.head.commit.hexsha)
+                files = {f.path: f.status for f in backend.unpushed_files(info)}
+                self.assertEqual(files, {"a.txt": "modified", "b.txt": "added"})
+                self.assertIn("+changed", backend.diff_for_unpushed_file(info, "a.txt"))
+
+                # branche jamais publiée : seuls ses propres commits comptent
+                clone.git.checkout("-b", "feature")
+                self.assertIsNone(backend.unpushed_info().upstream)
+                self.assertEqual(backend.unpushed_info().count, 2)
+                clone.git.push("origin", "feature")
+                self.assertIsNone(backend.unpushed_info())
+            finally:
+                backend.close()
+                clone.close()
+                seed.close()
+                origin.close()
+
+    def test_unpushed_info_is_none_without_remote(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = _init_repo(directory)
+            backend = GitBackend(directory)
+            try:
+                _commit_file(repo, "a.txt", "1\n", "first")
+                self.assertIsNone(backend.unpushed_info())
+            finally:
+                backend.close()
+                repo.close()
+
     def test_signature_changes_when_a_ref_moves(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repo = _init_repo(directory)
@@ -564,6 +615,29 @@ class GraphViewRedrawTests(unittest.TestCase):
         changed[0].refs.append("main")
         panel.set_commits(changed)
         self.assertGreater(len(redraws), settled)
+
+    def test_unpushed_row_is_prepended_and_selectable(self) -> None:
+        from gitkrakit.core import PENDING_PUSH_SHA, UnpushedInfo
+        from gitkrakit.ui.graph_view import GraphPanel
+
+        panel = GraphPanel()
+        panel.resize(1000, 600)
+        commits = self._commits(5)
+        selected: list[str] = []
+        panel.commit_selected.connect(selected.append)
+
+        panel.set_commits(commits, UnpushedInfo(2, commits[0].sha, "origin/main", "base"))
+        nodes = panel.view._graph_layout.nodes
+        self.assertEqual(len(nodes), 6)
+        self.assertTrue(nodes[0].is_pending)
+        self.assertEqual(nodes[0].parent_lanes[0][1], 1)  # relié au commit HEAD
+
+        panel.view.select_commit(PENDING_PUSH_SHA)
+        self.assertEqual(selected, [PENDING_PUSH_SHA])
+
+        panel.set_commits(commits)  # tout est poussé
+        self.assertEqual(len(panel.view._graph_layout.nodes), 5)
+        self.assertIsNone(panel.view.selected_sha)
 
     def test_setting_identical_column_widths_does_not_redraw(self) -> None:
         from gitkrakit.ui.graph_view import GraphPanel

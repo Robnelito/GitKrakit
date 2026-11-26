@@ -8,9 +8,10 @@ from gitkrakit.core.git_backend import (
     GitBackend,
     GitBackendError,
     RefsSnapshot,
+    UnpushedInfo,
 )
 from gitkrakit.core.gitflow import GitFlow, GitFlowConfig, GitFlowStatus
-from gitkrakit.core.graph_model import GraphLayout, GraphNode
+from gitkrakit.core.graph_model import PENDING_PUSH_SHA, GraphLayout, GraphNode
 
 __all__ = [
     "CommitInfo",
@@ -23,7 +24,9 @@ __all__ = [
     "GitFlowStatus",
     "GraphLayout",
     "GraphNode",
+    "PENDING_PUSH_SHA",
     "RefsSnapshot",
+    "UnpushedInfo",
     "parse_unified_diff",
     "split_command",
 ]

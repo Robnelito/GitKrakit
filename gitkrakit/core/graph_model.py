@@ -24,6 +24,10 @@ from gitkrakit.core.git_backend import CommitInfo
 from gitkrakit.theme import LANE_COLORS
 
 
+# sha factice de la ligne de tête « commits à pousser » (jamais un vrai commit)
+PENDING_PUSH_SHA = "pending-push"
+
+
 @dataclass
 class GraphNode:
     commit: CommitInfo
@@ -32,6 +36,10 @@ class GraphNode:
     color: str
     # positions (lane, row) des parents, pour tracer les lignes
     parent_lanes: list[tuple[int, int]]
+
+    @property
+    def is_pending(self) -> bool:
+        return self.commit.sha == PENDING_PUSH_SHA
 
 
 class GraphLayout:

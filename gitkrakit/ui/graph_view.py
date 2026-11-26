@@ -49,7 +49,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gitkrakit.core import GraphLayout, GraphNode
+from datetime import datetime
+
+from gitkrakit.core import PENDING_PUSH_SHA, CommitInfo, GraphLayout, GraphNode, UnpushedInfo
 from gitkrakit import theme
 from gitkrakit.ui.icons import app_icon
 
@@ -89,8 +91,12 @@ class CommitRowItem(QGraphicsRectItem):
 
         # Neutral zebra striping keeps long histories readable without
         # competing with lane colors.
-        base = QColor(theme.PANEL_BG)
-        base.setAlpha(34 if node.row % 2 else 0)
+        if node.is_pending:
+            base = QColor(theme.ACCENT_DIM)
+            base.setAlpha(40)
+        else:
+            base = QColor(theme.PANEL_BG)
+            base.setAlpha(34 if node.row % 2 else 0)
         self._base_brush = QBrush(base)
 
         hover = QColor(theme.SURFACE)
@@ -135,7 +141,12 @@ class CommitNodeItem(QGraphicsEllipseItem):
         super().__init__(-r, -r, 2 * r, 2 * r)
         self.node = node
         self._view = view
-        if len(node.commit.parents) > 1:
+        if node.is_pending:
+            # nœud creux en pointillés : commits locaux pas encore publiés
+            self.setBrush(QBrush(QColor(theme.BACKGROUND)))
+            self._normal_pen = QPen(QColor(node.color), 2)
+            self._normal_pen.setStyle(Qt.DotLine)
+        elif len(node.commit.parents) > 1:
             self.setBrush(QBrush(QColor(theme.BACKGROUND)))
             self._normal_pen = QPen(QColor(node.color), 2.2)
         else:
@@ -146,7 +157,10 @@ class CommitNodeItem(QGraphicsEllipseItem):
         self.setZValue(10)
         self.setAcceptHoverEvents(True)
         self.setCursor(Qt.PointingHandCursor)
-        self.setToolTip(f"{node.commit.short_sha} — {node.commit.message}")
+        if node.is_pending:
+            self.setToolTip(node.commit.message)
+        else:
+            self.setToolTip(f"{node.commit.short_sha} — {node.commit.message}")
 
     def mousePressEvent(self, event):
         self._view.select_commit(self.node.commit.sha)
@@ -221,13 +235,33 @@ class GraphView(QGraphicsView):
         if (self.col_ref, self.col_graph, self.col_msg) != before:
             self._redraw()
 
-    def set_commits(self, commits) -> None:
+    @staticmethod
+    def _pending_commit(unpushed: UnpushedInfo) -> CommitInfo:
+        target = f"vers {unpushed.upstream}" if unpushed.upstream else "(nouvelle branche)"
+        return CommitInfo(
+            sha=PENDING_PUSH_SHA,
+            short_sha="",
+            message=f"↑ {unpushed.count} commit(s) à pousser {target}",
+            author="",
+            author_email="",
+            date=datetime.now(),
+            parents=[unpushed.head_sha],
+        )
+
+    def set_commits(self, commits, unpushed: UnpushedInfo | None = None) -> None:
         # Rien n'a bougé (retour de focus, fetch sans nouveauté) : on évite de
         # reconstruire toute la scène.
-        signature = tuple((c.sha, tuple(c.refs)) for c in commits)
+        pending_key = (
+            (unpushed.count, unpushed.head_sha, unpushed.upstream) if unpushed else None
+        )
+        signature = (tuple((c.sha, tuple(c.refs)) for c in commits), pending_key)
         if signature == self._commits_signature and self._graph_layout is not None:
             return
         self._commits_signature = signature
+        if unpushed is not None:
+            commits = [self._pending_commit(unpushed), *commits]
+        elif self.selected_sha == PENDING_PUSH_SHA:
+            self.selected_sha = None  # tout a été poussé : la ligne disparaît
         # préserver la position de défilement (rafraîchissement auto)
         v_scroll = self.verticalScrollBar().value()
         h_scroll = self.horizontalScrollBar().value()
@@ -260,6 +294,9 @@ class GraphView(QGraphicsView):
             (item.node for item in self.items(event.pos()) if hasattr(item, "node")), None
         )
         if node is None:
+            return
+        if node.is_pending:
+            self.select_commit(PENDING_PUSH_SHA)
             return
         commit = node.commit
         self.select_commit(commit.sha)
@@ -317,6 +354,8 @@ class GraphView(QGraphicsView):
             line_color = QColor(node.color)
             line_color.setAlpha(225)
             pen = QPen(line_color, 2.2)
+            if node.is_pending:
+                pen.setStyle(Qt.DotLine)
             pen.setCapStyle(Qt.RoundCap)
             pen.setJoinStyle(Qt.RoundJoin)
             for parent_lane, parent_row in node.parent_lanes:
@@ -336,10 +375,13 @@ class GraphView(QGraphicsView):
             item.setPos(graph_x + GRAPH_LEFT_PADDING + node.lane * LANE_WIDTH, y_center)
             self._scene.addItem(item)
 
-            self._draw_refs(node, y_center)
-
             is_merge = len(node.commit.parents) > 1
             message = metrics.elidedText(node.commit.message, Qt.ElideRight, self.col_msg - 18)
+            if node.is_pending:
+                self._draw_text(message, self._ui_font, theme.ACCENT, msg_x + 10, y_center)
+                continue
+
+            self._draw_refs(node, y_center)
             self._draw_text(
                 message,
                 self._ui_font,
@@ -635,8 +677,8 @@ class GraphPanel(QWidget):
         self.empty_label.setStyleSheet(f"color: {theme.TEXT_MUTED}; padding: 32px;")
         self.view.apply_theme()
 
-    def set_commits(self, commits) -> None:
-        self.view.set_commits(commits)
+    def set_commits(self, commits, unpushed: UnpushedInfo | None = None) -> None:
+        self.view.set_commits(commits, unpushed)
         self.content_stack.setCurrentWidget(self.view if commits else self.empty_label)
         # si la colonne graphe n'a pas été redimensionnée à la main,
         # répercute sa largeur auto-calculée (nb de lanes) sur l'en-tête

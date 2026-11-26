@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from gitkrakit import theme
-from gitkrakit.core import CommitInfo, FileStatus
+from gitkrakit.core import PENDING_PUSH_SHA, CommitInfo, FileStatus, UnpushedInfo
 from gitkrakit.ui.icons import status_icon
 
 
@@ -95,6 +95,19 @@ class DetailsPanel(QWidget):
         if self._current_sha:
             self.file_diff_requested.emit(self._current_sha, item.data(Qt.UserRole))
 
+    def show_unpushed(self, info: UnpushedInfo, files: list[FileStatus]) -> None:
+        """Fichiers que le prochain push enverra (cumul des commits locaux)."""
+        self._current_sha = PENDING_PUSH_SHA
+        self.sha_label.setText("À POUSSER")
+        self.sha_label.setToolTip(info.head_sha)
+        target = info.upstream or "nouvelle branche"
+        self.message_label.setText(f"{info.count} commit(s) → {target}")
+        self.message_frame.show()
+        self.author_label.setText("")
+        self.parents_label.setText("")
+        self.files_label.setText(f"{len(files)} fichier(s) envoyé(s) au prochain push")
+        self._fill_files(files)
+
     def show_commit(self, commit: CommitInfo, files: list[FileStatus]) -> None:
         self._current_sha = commit.sha
         self.sha_label.setText(f"COMMIT {commit.short_sha}")
@@ -109,7 +122,9 @@ class DetailsPanel(QWidget):
 
         refs = f" · {', '.join(commit.refs)}" if commit.refs else ""
         self.files_label.setText(f"{len(files)} fichier(s) modifié(s){refs}")
+        self._fill_files(files)
 
+    def _fill_files(self, files: list[FileStatus]) -> None:
         self.files_list.clear()
         for f in files:
             item = QListWidgetItem(status_icon(f.status), f.path)
